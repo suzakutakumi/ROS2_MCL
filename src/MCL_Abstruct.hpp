@@ -3,6 +3,8 @@
 #include <vector>
 #include <iostream>
 #include <thread>
+#include <cmath>
+#include <omp.h>
 
 template <typename PoseType, typename MotionModelType, typename SensorModelType, typename MapType>
 class AbstructMCL
@@ -55,6 +57,7 @@ private:
         // calculate weights of particles
         double weight_sum = 0;
 
+        #pragma omp parallel for
         for (auto &p : particles)
         {
             p.weight = calculate_weight(p, sensor_data, map);

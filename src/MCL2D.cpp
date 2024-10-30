@@ -2,12 +2,11 @@
 #include "utils.hpp"
 #include <iostream>
 #include <fstream>
+#include <omp.h>
 
-MCL2D::MCL2D(int num, Map map, double sig, double threshold)
+MCL2D::MCL2D(int num, GridMap map, double sig, double threshold, bool (*comp)(double, double))
 {
-    map_size_y = map.size();
-    map_size_x = map[0].size();
-
+    check_blank_func = comp;
     map_threshold = threshold;
 
     particles.clear();
@@ -16,12 +15,12 @@ MCL2D::MCL2D(int num, Map map, double sig, double threshold)
         Particle p;
         while (true)
         {
-            int x = utils::common_random::randint(0, map_size_x - 1);
-            int y = utils::common_random::randint(0, map_size_y - 1);
-            if (map[y][x] >= map_threshold)
+            int index = utils::common_random::randint(0, map.size() - 1);
+            auto iter = std::next(map.begin(), index);
+            if (check_blank_func(iter->second, map_threshold))
             {
-                p.x = (double)x;
-                p.y = (double)y;
+                p.x = (double)iter->first.first;
+                p.y = (double)iter->first.second;
                 break;
             }
         }
@@ -49,11 +48,12 @@ void MCL2D::motion_update(const MotionModel &motion)
     }
 }
 
-double MCL2D::calculate_weight(const Particle &particle, const SensorModel &sensor_data, const Map &map)
+double MCL2D::calculate_weight(const Particle &particle, const SensorModel &sensor_data, const GridMap &map)
 {
     // パーティクルごとに各点群のマッチングをする
     double weight = 0;
-    for (auto s : sensor_data.data)
+#pragma omp parallel for reduction(+ : weight)
+    for (const auto &s : sensor_data.data)
     {
         auto deg = s.degree + particle.deg; // パーティクルの角度も足す
 
@@ -61,47 +61,44 @@ double MCL2D::calculate_weight(const Particle &particle, const SensorModel &sens
         auto x_step = cos(deg * M_PI / 180);
         auto y_step = sin(deg * M_PI / 180);
 
-        int map_size_y = (int)map.size();
-        int map_size_x = (int)map[0].size();
-
         double m_distance_y = 0;
         double m_distance_x = 0;
+
+        int p_distance = 0;
 
         while (true)
         {
             int y = (int)(particle.y + m_distance_y);
             int x = (int)(particle.x + m_distance_x);
-            if (0 > y or y >= map_size_y or 0 > x or x >= map_size_x)
+
+            auto map_itr = map.find(GridType(x, y));
+            if (p_distance > sensor_data.max_range or
+                (map_itr != map.end() and not check_blank_func(map_itr->second, map_threshold)))
             {
-                weight += exp(-100);
                 break;
             }
 
-            auto p_distance = sqrt(m_distance_y * m_distance_y + m_distance_x * m_distance_x);
-            if (std::isinf(s.distance))
-            {
-                if (p_distance > sensor_data.max_range)
-                {
-                    weight += 0;
-                    break;
-                }
-                if (map[y][x] <= map_threshold)
-                {
-                    weight += exp(-100);
-                    break;
-                }
-            }
-            else
-            {
-                if (map[y][x] <= map_threshold)
-                {
-                    weight += exp(-(s.distance - p_distance) * (s.distance - p_distance) / 2);
-                    break;
-                }
-            }
+            p_distance++;
 
             m_distance_y += y_step;
             m_distance_x += x_step;
+        }
+
+        if (std::isinf(s.distance))
+        {
+            // 観測範囲を正当に超えている
+            if (p_distance > sensor_data.max_range)
+            {
+                weight += exp(-10);
+            }
+            else
+            {
+                weight += exp(-(sensor_data.max_range - p_distance) * (sensor_data.max_range - p_distance) / 2);
+            }
+        }
+        else
+        {
+            weight += exp(-(s.distance - p_distance) * (s.distance - p_distance) / 2);
         }
     }
 
@@ -125,13 +122,13 @@ Pose MCL2D::prediction_pose()
     return new_pose;
 }
 
-void MCL2D::resampling(const Map &map)
+void MCL2D::resampling(const GridMap &map)
 {
     std::vector<Particle> new_particles;
     new_particles.clear();
     for (std::size_t i = 0; i < particles.size(); i++)
     {
-        if (utils::common_random::randint(0, 99) <= 80)
+        if (utils::common_random::randint(0, 99) < 70)
         {
             double var = utils::common_random::randdouble(0, 1);
             double sum = 0;
@@ -150,12 +147,12 @@ void MCL2D::resampling(const Map &map)
             Particle p;
             while (true)
             {
-                int x = utils::common_random::randint(0, map_size_x - 1);
-                int y = utils::common_random::randint(0, map_size_y - 1);
-                if (map[y][x] >= map_threshold)
+                int index = utils::common_random::randint(0, map.size() - 1);
+                auto iter = std::next(map.begin(), index);
+                if (check_blank_func(iter->second, map_threshold))
                 {
-                    p.x = (double)x;
-                    p.y = (double)y;
+                    p.x = (double)iter->first.first;
+                    p.y = (double)iter->first.second;
                     break;
                 }
             }
