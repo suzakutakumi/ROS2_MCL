@@ -4,52 +4,19 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <queue>
 
 #include "MCL2D.hpp"
 #include "Error.hpp"
 
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/laser_scan.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
 // #include <opencv2/opencv.hpp>
 
 using std::placeholders::_1;
 using namespace std;
-
-GridMap initGridMap(SensorModel sensor)
-{
-  GridMap map;
-  for (auto s : sensor.data)
-  {
-    auto x_step = cos(s.degree * M_PI / 180);
-    auto y_step = sin(s.degree * M_PI / 180);
-
-    Pose pos;
-    pos.x = 0;
-    pos.y = 0;
-    double distance = 0;
-    while (true)
-    {
-      map[GridType((int)pos.x, (int)pos.y)] = 0;
-      distance += 1.0;
-
-      if (distance >= s.distance)
-      {
-        map[GridType((int)pos.x, (int)pos.y)] = 1;
-        break;
-      }
-      if (distance >= sensor.max_range)
-      {
-        break;
-      }
-
-      pos.x += x_step;
-      pos.y += y_step;
-    }
-  }
-  return map;
-}
 
 double deg_mod(double deg)
 {
@@ -66,127 +33,155 @@ double deg_mod(double deg)
   return deg;
 }
 
-class LidarSubscriber : public rclcpp::Node
+class MclNode : public rclcpp::Node
 {
 public:
-  LidarSubscriber() : Node("lidar_subscriber")
+  MclNode() : Node("mcl_node")
   {
-    subscription1_ = create_subscription<sensor_msgs::msg::LaserScan>("/scan", 10, std::bind(&LidarSubscriber::scanCallback, this, _1));
-    subscription2_ = create_subscription<sensor_msgs::msg::Image>("/map", 10, std::bind(&LidarSubscriber::registerMap, this, _1));
+    subscription1_ = create_subscription<sensor_msgs::msg::PointCloud2>("/scan", 10, std::bind(&MclNode::scanCallback, this, _1));
+    subscription2_ = create_subscription<sensor_msgs::msg::PointCloud2>("/map", 10, std::bind(&MclNode::registerMap, this, _1));
 
     publisher_ = create_publisher<sensor_msgs::msg::Image>("/map_image", 10);
-    timer_ = create_wall_timer(500ms, std::bind(&LidarSubscriber::weight_publisher, this));
+    timer_ = create_wall_timer(500ms, std::bind(&MclNode::image_publisher, this));
 
+    // MCLの設定値
     this->declare_parameter("num_of_particle", 10000);
     this->declare_parameter("sigma", 0.04);
     this->declare_parameter("map_threshold", 0.5);
+    this->declare_parameter("max_distance", 4.0);
+    this->declare_parameter("variance", 0.5);
+
+    mcl_config.particle_num = get_parameter("num_of_particle").as_int();
+    mcl_config.sigma = get_parameter("sigma").as_double();
+    mcl_config.map_threshold = get_parameter("map_threshold").as_double();
+    mcl_config.distance_map_max_value = get_parameter("max_distance").as_double();
+    mcl_config.variance = get_parameter("variance").as_double();
+
+    // MCL以外の値
     this->declare_parameter("map_resolution", 0.05);
     this->declare_parameter("error_ganma", 0.4);
     this->declare_parameter("error_vc", 0.05);
 
-    number_of_particle = get_parameter("num_of_particle").as_int();
-    sigma = get_parameter("sigma").as_double();
-    threshold = get_parameter("map_threshold").as_double();
     resolution = get_parameter("map_resolution").as_double();
     ganma = get_parameter("error_ganma").as_double();
     vc = get_parameter("error_vc").as_double();
 
-    cout << "number of particles: " << number_of_particle << endl;
-    cout << "sigma: " << sigma << endl;
-    cout << "map threshold: " << threshold << endl;
-    cout << "map resolution: " << resolution << endl;
+    RCLCPP_INFO(get_logger(), "number of particles, resolution = %d, %f", mcl_config.particle_num, resolution);
   }
 
 private:
-  MCL2D mcl = MCL2D();
+  MCLConfig mcl_config;
   GridMap map;
+  MCL2D mcl = MCL2D();
   vector<vector<vector<int>>> map_;
 
   double resolution;
-  bool check_start = false;
-
-  int number_of_particle;
-  double sigma;
-  double threshold;
   double ganma;
   double vc;
 
-  void registerMap(const sensor_msgs::msg::Image::SharedPtr msg)
+  void adaptResolution(SensorData &ps)
   {
-    int rows = msg->height;
-    int cols = msg->width;
-
-    for (int i = rows - 1; i >= 0; i--)
+    for (auto &p : ps)
     {
-      vector<int> row;
-      for (int j = 0; j < cols; j++)
-      {
-        int color = msg->data[i * rows + j];
-        map[GridType(j, i)] = (255 - color) / 255.0;
-      }
-    }
-
-    cout << "map size: " << rows << "x" << cols << endl;
-
-    if (not check_start)
-    {
-      mcl = MCL2D(number_of_particle, map, sigma, threshold);
-      check_start = true;
+      p.x /= resolution;
+      p.y /= resolution;
+      p.z /= resolution;
     }
   }
 
-  void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
+  void updateGridMap(SensorData pointcloud)
   {
-    MotionModel motion_model{0, 0};
+    double max_range = mcl_config.distance_map_max_value;
 
-    SensorModel sensor_model;
-    sensor_model.max_range = msg->range_max / resolution;
-
-    for (unsigned long i = 0; i < msg->ranges.size(); ++i)
+    std::vector<std::vector<double>> distance_map;
+    for (int i = 0; i <= (int)max_range + 1; i++)
     {
-      if (/*msg->range_max > msg->ranges[i] and*/ msg->ranges[i] > 0.0)
+      std::vector<double> row;
+      for (int j = 0; j <= (int)max_range + 1; j++)
       {
-        auto angle = msg->angle_min + i * msg->angle_increment;
-        angle = deg_mod(angle * 180 / M_PI);
-        auto distance = msg->ranges[i] / resolution;
-        sensor_model.data.push_back(SensorData{distance, angle});
+        row.push_back(sqrt(i * i + j * j));
+      }
+      distance_map.push_back(row);
+    }
+
+    std::queue<std::pair<GridType, GridType>> q;
+    for (auto p : pointcloud)
+    {
+      auto pos = GridPos(p);
+      map[pos] = GridValue{1.0, 0.0};
+      q.emplace(pos, pos);
+    }
+
+    while (not q.empty())
+    {
+      auto v = q.front();
+      q.pop();
+      auto current_pos = v.first;
+      auto root_pos = v.second;
+
+      std::vector<GridType> round{GridType(1, 0), GridType(-1, 0), GridType(0, 1), GridType(0, -1)};
+      for (auto &r : round)
+      {
+        auto new_pos = current_pos + r;
+        auto distance_vec = new_pos - root_pos;
+        auto distance = distance_map[abs(distance_vec.first)][abs(distance_vec.second)];
+        auto map_itr = map.find(new_pos);
+        if (distance <= max_range and (map_itr == map.end() or distance < map_itr->second.distance))
+        {
+          double prob = map_itr == map.end() ? 0.0 : map_itr->second.prob;
+          map[current_pos] = GridValue{prob, distance};
+          q.emplace(new_pos, root_pos);
+        }
       }
     }
-    if (not check_start)
+  }
+
+  void registerMap(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  {
+    SensorData pointcloud;
+    pcl::fromROSMsg(*msg, pointcloud);
+
+    adaptResolution(pointcloud);
+
+    updateGridMap(pointcloud);
+  }
+
+  void scanCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+  {
+    MotionModel motion_model{0, 0};
+    SensorModel sensor_model;
+
+    pcl::fromROSMsg(*msg, sensor_model.data);
+
+    adaptResolution(sensor_model.data);
+
+    if (map_.size() <= 0)
     {
-      RCLCPP_INFO(get_logger(), "init map");
-      map = initGridMap(sensor_model);
-      RCLCPP_INFO(get_logger(), "init mcl");
-      mcl = MCL2D(number_of_particle, map, sigma, threshold);
-      check_start = true;
-      RCLCPP_INFO(get_logger(), "start mcl");
+      RCLCPP_INFO(get_logger(), "init");
+      updateGridMap(sensor_model.data);
+
+      mcl = MCL2D(map, mcl_config);
       return;
     }
 
     RCLCPP_INFO(get_logger(), "mcl update");
     mcl.update(motion_model, sensor_model, map);
-    cout << mcl.pose.x * resolution << "," << mcl.pose.y * resolution << "," << mcl.pose.deg << "," << endl
-         << endl;
+    RCLCPP_DEBUG(get_logger(), "position(%f,%f,%f deg)", mcl.pose.x * resolution, mcl.pose.y * resolution, mcl.pose.deg);
 
+    RCLCPP_INFO(get_logger(), "calc error");
     vector<pair<double, double>> points;
     for (auto &p : mcl.current_particles)
     {
       points.emplace_back(p.x, p.y);
     }
     auto error_value = calc_error_ellipse(points, ganma, vc);
-    RCLCPP_INFO(get_logger(), "calc error: %lf", error_value);
-
-    if (error_value > 0.5)
-    {
-      RCLCPP_INFO(get_logger(), "update map");
-      update_map(sensor_model, error_value / 10);
-    }
+    RCLCPP_DEBUG(get_logger(), "error value:%f", error_value);
 
     RCLCPP_INFO(get_logger(), "draw image");
     draw_image();
   }
 
-  void weight_publisher()
+  void image_publisher()
   {
     if (map_.size() <= 0)
     {
@@ -213,10 +208,9 @@ private:
     publisher_->publish(image);
   }
 
-  void
-  draw_image()
+  void draw_image()
   {
-    if (not check_start)
+    if (map_.size() <= 0)
     {
       return;
     }
@@ -253,10 +247,10 @@ private:
     // 障害物の状態を表示
     for (auto grid : map)
     {
-      if (grid.second > 0.4)
+      if (grid.second.prob > 0.4)
       {
         map_[grid.first.second - min_range.second][grid.first.first - min_range.first] =
-            vector<int>(3, (int)(255 * grid.second));
+            vector<int>(3, (int)(255 * grid.second.prob));
       }
     }
 
@@ -305,43 +299,8 @@ private:
     }
   }
 
-  void update_map(SensorModel sensor, double init_value)
-  {
-    for (auto s : sensor.data)
-    {
-      auto x_step = cos((s.degree + mcl.pose.deg) * M_PI / 180);
-      auto y_step = sin((s.degree + mcl.pose.deg) * M_PI / 180);
-
-      Pose pos = mcl.pose;
-      double distance = 0;
-      while (true)
-      {
-        auto grid = GridType((int)pos.x, (int)pos.y);
-        auto map_iter = map.find(grid);
-        if (map_iter == map.end())
-        {
-          map[grid] = 0;
-        }
-
-        distance += 1.0;
-
-        if (distance >= s.distance)
-        {
-          map[grid] += init_value;
-          break;
-        }
-        if (distance >= sensor.max_range)
-        {
-          break;
-        }
-
-        pos.x += x_step;
-        pos.y += y_step;
-      }
-    }
-  }
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subscription1_;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription2_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription1_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription2_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
@@ -349,7 +308,7 @@ private:
 int main(int argc, char *argv[])
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(make_shared<LidarSubscriber>());
+  rclcpp::spin(make_shared<MclNode>());
   rclcpp::shutdown();
   return 0;
 }

@@ -21,23 +21,23 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(PCL 1.13 REQUIRED)
 
 find_package(OpenMP)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 
-# find_package(OpenCV REQUIRED)
+include_directories(
+  include
+)
+include_directories(${PCL_INCLUDE_DIRS})
+link_directories(${PCL_LIBRARY_DIRS})
+add_definitions(${PCL_DEFINITIONS})
 
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
+add_executable(mcl_node src/mcl_node.cpp src/MCL2D.cpp src/Error.cpp src/Grid.cpp)
+ament_target_dependencies(mcl_node rclcpp std_msgs sensor_msgs PCL)
 
-# include_directories(
-#     ${OpenCV_INCLUDE_DIRS}
-# )
-
-add_executable(mcl_node src/mcl_node.cpp src/MCL2D.cpp src/Error.cpp)
-ament_target_dependencies(mcl_node rclcpp std_msgs sensor_msgs)
+target_link_libraries(mcl_node ${PCL_LIBRARIES})
 
 install(TARGETS mcl_node
   DESTINATION lib/${PROJECT_NAME})
