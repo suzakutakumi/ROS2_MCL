@@ -109,6 +109,12 @@ private:
     {
       auto pos = GridPos(p);
       map[pos] = GridValue{1.0, 0.0};
+
+      map.min_corner.first = std::min(pos.first, map.min_corner.first);
+      map.min_corner.second = std::min(pos.second, map.min_corner.second);
+      map.max_corner.first = std::min(pos.first, map.max_corner.first);
+      map.max_corner.second = std::min(pos.second, map.max_corner.second);
+
       q.emplace(pos, pos);
     }
 

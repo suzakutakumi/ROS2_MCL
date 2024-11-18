@@ -48,7 +48,13 @@ struct GridValue
     double prob;
     double distance;
 };
-using GridMap = std::unordered_map<GridType, GridValue>;
+
+class GridMap : public std::unordered_map<GridType, GridValue>
+{
+public:
+    GridType min_corner{0, 0};
+    GridType max_corner{0, 0};
+};
 
 GridType GridPos(const SensorOne &p);
 GridType operator+(const GridType x, const GridType y);
@@ -62,6 +68,8 @@ struct MCLConfig
     double distance_map_max_value; // 距離マップの最大値
     double variance;               // 測定値の誤差の分散
     double hit_prob = 0.5;         // 地図情報と測定値が一致する場合の信頼度
+
+    double resmapling_prob = 0.8; // 統計的なリサンプリングになる確率
 };
 
 class MCL2D : public AbstructMCL<Pose, MotionModel, SensorModel, GridMap>

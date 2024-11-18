@@ -11,15 +11,17 @@ MCL2D::MCL2D(GridMap map, MCLConfig config, bool (*comp)(double, double))
 
     pose = Pose{0, 0, 0};
 
+    // Global Localization
     particles.clear();
     for (int i = 0; i < config.particle_num; i++)
     {
         Particle p;
         while (true)
         {
-            int index = utils::common_random::randint(0, map.size() - 1);
-            auto iter = std::next(map.begin(), index);
-            if (check_blank_func(iter->second.prob, config.map_threshold))
+            int x = utils::common_random::randint(map.min_corner.first, map.max_corner.first);
+            int y = utils::common_random::randint(map.min_corner.second, map.max_corner.second);
+            auto iter = map.find(GridType(x, y));
+            if (iter == map.end() or check_blank_func(iter->second.prob, config.map_threshold))
             {
                 p.x = (double)iter->first.first;
                 p.y = (double)iter->first.second;
@@ -96,7 +98,7 @@ void MCL2D::resampling(const GridMap &map)
     new_particles.clear();
     for (std::size_t i = 0; i < particles.size(); i++)
     {
-        if (utils::common_random::randint(0, 99) < 70)
+        if (utils::common_random::randint(0, 99) / 100.0 < config.resmapling_prob)
         {
             double var = utils::common_random::randdouble(0, 1);
             double sum = 0;
@@ -115,9 +117,10 @@ void MCL2D::resampling(const GridMap &map)
             Particle p;
             while (true)
             {
-                int index = utils::common_random::randint(0, map.size() - 1);
-                auto iter = std::next(map.begin(), index);
-                if (check_blank_func(iter->second.prob, config.map_threshold))
+                int x = utils::common_random::randint(map.min_corner.first, map.max_corner.first);
+                int y = utils::common_random::randint(map.min_corner.second, map.max_corner.second);
+                auto iter = map.find(GridType(x, y));
+                if (iter == map.end() or check_blank_func(iter->second.prob, config.map_threshold))
                 {
                     p.x = (double)iter->first.first;
                     p.y = (double)iter->first.second;
