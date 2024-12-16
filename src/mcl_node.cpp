@@ -84,7 +84,7 @@ public:
 
 private:
   MCLConfig mcl_config;
-  GridMap map;
+  Grid::Map map;
   MCL2D mcl = MCL2D();
   vector<vector<vector<int>>> map_;
 
@@ -138,16 +138,16 @@ private:
       distance_map.push_back(row);
     }
 
-    std::queue<std::pair<GridType, GridType>> q;
+    std::queue<std::pair<Grid::Pos, Grid::Pos>> q;
     for (auto &p : pointcloud)
     {
-      auto pos = GridPos(p);
+      auto pos = Grid::Pos(p);
       if (map.find(pos) != map.end())
       {
         continue;
       }
 
-      map.emplace(pos, GridValue{1.0, 0.0});
+      map.emplace(pos, Grid::Value{1.0, 0.0});
 
       q.emplace(pos, pos);
     }
@@ -159,19 +159,19 @@ private:
       auto current_pos = v.first;
       auto root_pos = v.second;
 
-      std::vector<GridType> round{GridType(1, 0), GridType(-1, 0), GridType(0, 1), GridType(0, -1)};
+      std::vector<Grid::Pos> round{Grid::Pos(1, 0), Grid::Pos(-1, 0), Grid::Pos(0, 1), Grid::Pos(0, -1)};
       for (auto &r : round)
       {
         auto new_pos = current_pos + r;
         auto distance_vec = new_pos - root_pos;
-        auto distance = distance_map[abs(distance_vec.first)][abs(distance_vec.second)];
+        auto distance = distance_map[abs(distance_vec.x)][abs(distance_vec.y)];
         if (distance > max_range)
           continue;
 
         auto map_itr = map.find(new_pos);
         if (map_itr == map.end())
         {
-          map.emplace(new_pos, GridValue{0.0, distance});
+          map.emplace(new_pos, Grid::Value{0.0, distance});
 
           q.emplace(new_pos, root_pos);
         }
@@ -241,13 +241,13 @@ private:
     auto likelihood2 = 1.0;
     auto likelihood3 = 0.0;
     auto likelihood4 = 0.0;
-    const auto pos = GridType(mcl.pose.x, mcl.pose.y);
+    const auto pos = Grid::Pos(mcl.pose.x, mcl.pose.y);
     const auto cos_ = cos(mcl.pose.deg * M_PI / 180), sin_ = sin(mcl.pose.deg * M_PI / 180);
     const auto hit_prob = 1.0 - mcl_config.rand_prob / sensor_model.max_range;
     for (const auto &s : sensor_model.data)
     {
-      auto data = GridPos(s);
-      auto point = pos + GridType(data.first * cos_ - data.second * sin_, data.first * sin_ + data.second * cos_);
+      auto data = Grid::Pos(s);
+      auto point = pos + Grid::Pos(data.first * cos_ - data.second * sin_, data.first * sin_ + data.second * cos_);
       auto v = mcl.LikelihoodFieldModelOnce(point, sensor_model.max_range, map, mcl_config.distance_map_max_value, mcl_config.variance, hit_prob, mcl_config.rand_prob);
       likelihood2 *= v;
       likelihood3 += v;

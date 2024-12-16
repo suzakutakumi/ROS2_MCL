@@ -4,7 +4,7 @@
 #include <fstream>
 #include <omp.h>
 
-MCL2D::MCL2D(GridMap map, MCLConfig mcl_config, bool (*comp)(double, double))
+MCL2D::MCL2D(Grid::Map map, MCLConfig mcl_config, bool (*comp)(double, double))
 {
     config = mcl_config;
     check_blank_func = comp;
@@ -18,9 +18,9 @@ MCL2D::MCL2D(GridMap map, MCLConfig mcl_config, bool (*comp)(double, double))
         Particle p;
         while (true)
         {
-            int x = utils::common_random::randint(map.min_corner.first, map.max_corner.first);
-            int y = utils::common_random::randint(map.min_corner.second, map.max_corner.second);
-            auto iter = map.find(GridType(x, y));
+            int x = utils::common_random::randint(map.min_corner.x, map.max_corner.x);
+            int y = utils::common_random::randint(map.min_corner.y, map.max_corner.y);
+            auto iter = map.find(Grid::Pos(x, y));
             if (iter == map.end() or check_blank_func(iter->second.prob, config.map_threshold))
             {
                 p.x = (double)x;
@@ -50,7 +50,7 @@ void MCL2D::motion_update(const MotionModel &motion)
     }
 }
 
-double MCL2D::LikelihoodFieldModelOnce(const GridType &point, const double &max_range, const GridMap &map)
+double MCL2D::LikelihoodFieldModelOnce(const Grid::Pos &point, const double &max_range, const Grid::Map &map)
 {
     const auto &map_max_distance = config.distance_map_max_value;
     const auto &variance = config.variance;
@@ -59,7 +59,7 @@ double MCL2D::LikelihoodFieldModelOnce(const GridType &point, const double &max_
     return LikelihoodFieldModelOnce(point, max_range, map, map_max_distance, variance, hit_prob, rand_prob);
 }
 
-double MCL2D::LikelihoodFieldModelOnce(const GridType &point, const double &max_range, const GridMap &map, const double &map_max_distance, const double &variance, const double &hit_prob, const double &rand_prob)
+double MCL2D::LikelihoodFieldModelOnce(const Grid::Pos &point, const double &max_range, const Grid::Map &map, const double &map_max_distance, const double &variance, const double &hit_prob, const double &rand_prob)
 {
     auto map_itr = map.find(point);
     double distance = map_itr != map.end() ? map_itr->second.distance : map_max_distance;
@@ -67,18 +67,18 @@ double MCL2D::LikelihoodFieldModelOnce(const GridType &point, const double &max_
     return hit_prob * exp(-distance * distance / (2 * variance * variance)) + rand_prob / max_range;
 }
 
-double MCL2D::calculate_weight(const Particle &particle, const SensorModel &sensor_data, const GridMap &map)
+double MCL2D::calculate_weight(const Particle &particle, const SensorModel &sensor_data, const Grid::Map &map)
 {
     // パーティクルごとに各点群のマッチングをする
     double weight = 0;
-    const auto pos = GridType(particle.x, particle.y);
+    const auto pos = Grid::Pos(particle.x, particle.y);
     const auto cos_ = cos(particle.deg * M_PI / 180), sin_ = sin(particle.deg * M_PI / 180);
 
 #pragma omp parallel for reduction(+ : weight)
     for (const auto &s : sensor_data.data)
     {
-        auto data = GridPos(s);
-        auto point = pos + GridType(data.first * cos_ - data.second * sin_, data.first * sin_ + data.second * cos_);
+        auto data = Grid::Pos(s);
+        auto point = pos + Grid::Pos(data.x * cos_ - data.y * sin_, data.x * sin_ + data.y * cos_);
         auto p = LikelihoodFieldModelOnce(point, sensor_data.max_range, map);
         weight += p;
     }
@@ -104,7 +104,7 @@ Pose MCL2D::prediction_pose()
     return new_pose;
 }
 
-void MCL2D::resampling(const GridMap &map)
+void MCL2D::resampling(const Grid::Map &map)
 {
     std::vector<Particle> new_particles;
     new_particles.clear();
@@ -131,9 +131,9 @@ void MCL2D::resampling(const GridMap &map)
             Particle p;
             while (true)
             {
-                int x = utils::common_random::randint(map.min_corner.first, map.max_corner.first);
-                int y = utils::common_random::randint(map.min_corner.second, map.max_corner.second);
-                auto iter = map.find(GridType(x, y));
+                int x = utils::common_random::randint(map.min_corner.x, map.max_corner.x);
+                int y = utils::common_random::randint(map.min_corner.y, map.max_corner.y);
+                auto iter = map.find(Grid::Pos(x, y));
                 if (iter == map.end() or check_blank_func(iter->second.prob, config.map_threshold))
                 {
                     p.x = (double)x;

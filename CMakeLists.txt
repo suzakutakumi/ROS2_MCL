@@ -27,15 +27,16 @@ find_package(OpenMP)
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 
-include_directories(
-  include
-)
-include_directories(${PCL_INCLUDE_DIRS})
 link_directories(${PCL_LIBRARY_DIRS})
 add_definitions(${PCL_DEFINITIONS})
 
 add_executable(mcl_node src/mcl_node.cpp src/MCL2D.cpp src/Error.cpp src/Grid.cpp)
 ament_target_dependencies(mcl_node rclcpp std_msgs sensor_msgs PCL)
+
+target_include_directories(mcl_node PUBLIC
+  ${PCL_INCLUDE_DIRS}
+  include
+)
 
 target_link_libraries(mcl_node ${PCL_LIBRARIES})
 

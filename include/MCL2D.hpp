@@ -1,7 +1,8 @@
 #pragma once
 
 #include "MCL_Abstruct.hpp"
-#include <unordered_map>
+#include "Grid/Map.hpp"
+
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/passthrough.h>
@@ -27,57 +28,8 @@ struct SensorModel
     double max_range;
 };
 
-template <class T>
-size_t HashCombine(const size_t seed, const T &v)
-{
-    return seed ^ (std::hash<T>()(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2));
-}
-/* pair用 */
-template <class T, class S>
-struct std::hash<std::pair<T, S>>
-{
-    size_t operator()(const std::pair<T, S> &keyval) const noexcept
-    {
-        return HashCombine(std::hash<T>()(keyval.first), keyval.second);
-    }
-};
-
-using GridType = std::pair<int, int>;
-struct GridValue
-{
-    double prob;
-    double distance;
-};
-
-class GridMap : public std::unordered_map<GridType, GridValue>
-{
-public:
-    GridType min_corner{0, 0};
-    GridType max_corner{0, 0};
-
-    template <typename... Args>
-    std::pair<GridMap::iterator, bool> emplace(Args &&...args)
-    {
-        auto res = ParentType::emplace(std::forward<Args>(args)...);
-        if (res.second)
-        {
-            auto pos = res.first->first;
-            min_corner.first = std::min(pos.first, min_corner.first);
-            min_corner.second = std::min(pos.second, min_corner.second);
-            max_corner.first = std::max(pos.first, max_corner.first);
-            max_corner.second = std::max(pos.second, max_corner.second);
-        }
-        return res;
-    };
-
-private:
-    using ParentType = std::unordered_map<GridType, GridValue>;
-    using ParentType::operator[];
-};
-
-GridType GridPos(const SensorOne &p);
-GridType operator+(const GridType &x, const GridType &y);
-GridType operator-(const GridType &x, const GridType &y);
+template <>
+Grid::Pos::Pos(const SensorOne &p);
 
 struct MCLConfig
 {
@@ -92,7 +44,7 @@ struct MCLConfig
     double resmapling_prob; // 統計的なリサンプリングになる確率
 };
 
-class MCL2D : public AbstructMCL<Pose, MotionModel, SensorModel, GridMap>
+class MCL2D : public AbstructMCL<Pose, MotionModel, SensorModel, Grid::Map>
 {
 public:
     MCLConfig config;
@@ -100,21 +52,21 @@ public:
     std::vector<Particle> current_particles;
 
     MCL2D() = default;
-    MCL2D(GridMap map, MCLConfig config, bool (*comp)(double, double) = [](double value, double threshould)
-                                         { return value <= threshould; });
+    MCL2D(Grid::Map map, MCLConfig config, bool (*comp)(double, double) = [](double value, double threshould)
+                                           { return value <= threshould; });
     void debug() override;
 
-    double LikelihoodFieldModelOnce(const GridType &point, const double &max_range, const GridMap &map);
-    double LikelihoodFieldModelOnce(const GridType &point, const double &max_range, const GridMap &map, const double &map_max_distance, const double &variance, const double &hit_prob, const double &rand_prob);
+    double LikelihoodFieldModelOnce(const Grid::Pos &point, const double &max_range, const Grid::Map &map);
+    double LikelihoodFieldModelOnce(const Grid::Pos &point, const double &max_range, const Grid::Map &map, const double &map_max_distance, const double &variance, const double &hit_prob, const double &rand_prob);
 
 private:
     void motion_update(const MotionModel &motion) override;
 
-    double calculate_weight(const Particle &particle, const SensorModel &sensor_data, const GridMap &map) override;
+    double calculate_weight(const Particle &particle, const SensorModel &sensor_data, const Grid::Map &map) override;
 
     Pose prediction_pose() override;
 
-    void resampling(const GridMap &map) override;
+    void resampling(const Grid::Map &map) override;
 
     bool (*check_blank_func)(double, double); // グリッドに障害物がないかの判定
 };

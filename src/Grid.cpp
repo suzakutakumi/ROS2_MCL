@@ -2,17 +2,19 @@
 #include <memory>
 #include <utility>
 
-GridType GridPos(const SensorOne &p)
+using namespace Grid;
+
+template <>
+Pos::Pos(const SensorOne &p) : pair((int)p.x, (int)p.z)
 {
-    return GridType((int)p.x, (int)p.z);
 }
 
-GridType operator+(const GridType &x, const GridType &y)
+Pos operator+(const Pos &x, const Pos &y)
 {
-    return GridType(x.first + y.first, x.second + y.second);
+    return Pos(x.first + y.first, x.second + y.second);
 }
 
-GridType operator-(const GridType &x, const GridType &y)
+Pos operator-(const Pos &x, const Pos &y)
 {
-    return GridType(x.first - y.first, x.second - y.second);
+    return Pos(x.first - y.first, x.second - y.second);
 }
