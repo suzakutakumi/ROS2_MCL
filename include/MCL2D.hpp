@@ -1,12 +1,8 @@
 #pragma once
 
 #include "MCL_Abstruct.hpp"
-#include "Grid/Map.hpp"
-
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl/io/pcd_io.h>
-#include <pcl/filters/passthrough.h>
-#include <pcl/common/transforms.h>
+#include "GridMap/Map.hpp"
+#include "Sensor.hpp"
 
 struct Pose
 {
@@ -18,18 +14,6 @@ struct MotionModel
     double delta_distance;
     double delta_degree;
 };
-
-using SensorOne = pcl::PointXYZRGB;
-using SensorData = pcl::PointCloud<SensorOne>;
-
-struct SensorModel
-{
-    SensorData data;
-    double max_range;
-};
-
-template <>
-Grid::Pos::Pos(const SensorOne &p);
 
 struct MCLConfig
 {
@@ -44,7 +28,7 @@ struct MCLConfig
     double resmapling_prob; // 統計的なリサンプリングになる確率
 };
 
-class MCL2D : public AbstructMCL<Pose, MotionModel, SensorModel, Grid::Map>
+class MCL2D : public AbstructMCL<Pose, MotionModel, Sensor::Model, Grid::Map>
 {
 public:
     MCLConfig config;
@@ -62,7 +46,7 @@ public:
 private:
     void motion_update(const MotionModel &motion) override;
 
-    double calculate_weight(const Particle &particle, const SensorModel &sensor_data, const Grid::Map &map) override;
+    double calculate_weight(const Particle &particle, const Sensor::Model &sensor_data, const Grid::Map &map) override;
 
     Pose prediction_pose() override;
 

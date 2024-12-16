@@ -14,6 +14,8 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 
+#include <pcl_conversions/pcl_conversions.h>
+
 using std::placeholders::_1;
 using namespace std;
 
@@ -98,7 +100,7 @@ private:
     v /= resolution;
   }
 
-  void adaptResolution(SensorData &ps)
+  void adaptResolution(Sensor::Data &ps)
   {
     for (auto &p : ps)
     {
@@ -113,7 +115,7 @@ private:
     v *= resolution;
   }
 
-  void restoreResolution(SensorData &ps)
+  void restoreResolution(Sensor::Data &ps)
   {
     for (auto &p : ps)
     {
@@ -123,7 +125,7 @@ private:
     }
   }
 
-  void updateGridMap(SensorData &pointcloud)
+  void updateGridMap(Sensor::Data &pointcloud)
   {
     double max_range = mcl_config.distance_map_max_value;
 
@@ -189,7 +191,7 @@ private:
   {
     RCLCPP_INFO(get_logger(), "register map");
 
-    SensorData pointcloud;
+    Sensor::Data pointcloud;
     pcl::fromROSMsg(*msg, pointcloud);
 
     adaptResolution(pointcloud);
@@ -206,7 +208,7 @@ private:
     RCLCPP_INFO(get_logger(), "start scan");
 
     MotionModel motion_model{0, 0};
-    SensorModel sensor_model;
+    Sensor::Model sensor_model;
 
     pcl::fromROSMsg(*msg, sensor_model.data);
     sensor_model.max_range = sensor_max_range;
@@ -241,14 +243,14 @@ private:
     auto likelihood2 = 1.0;
     auto likelihood3 = 0.0;
     auto likelihood4 = 0.0;
-    const auto pos = Grid::Pos(mcl.pose.x, mcl.pose.y);
+    const auto pos = Common::RealPos(mcl.pose.x, mcl.pose.y);
     const auto cos_ = cos(mcl.pose.deg * M_PI / 180), sin_ = sin(mcl.pose.deg * M_PI / 180);
     const auto hit_prob = 1.0 - mcl_config.rand_prob / sensor_model.max_range;
     for (const auto &s : sensor_model.data)
     {
-      auto data = Grid::Pos(s);
-      auto point = pos + Grid::Pos(data.first * cos_ - data.second * sin_, data.first * sin_ + data.second * cos_);
-      auto v = mcl.LikelihoodFieldModelOnce(point, sensor_model.max_range, map, mcl_config.distance_map_max_value, mcl_config.variance, hit_prob, mcl_config.rand_prob);
+      auto data = Common::RealPos(s);
+      auto point = pos + Common::RealPos(data.first * cos_ - data.second * sin_, data.first * sin_ + data.second * cos_);
+      auto v = mcl.LikelihoodFieldModelOnce(Grid::Pos(point), sensor_model.max_range, map, mcl_config.distance_map_max_value, mcl_config.variance, hit_prob, mcl_config.rand_prob);
       likelihood2 *= v;
       likelihood3 += v;
       likelihood4 += log(v);

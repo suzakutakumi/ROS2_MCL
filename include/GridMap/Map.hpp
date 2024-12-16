@@ -1,8 +1,8 @@
 #pragma once
 
 #include <unordered_map>
-#include "Pos.hpp"
-#include "Value.hpp"
+#include "GridMap/Pos.hpp"
+#include "GridMap/Value.hpp"
 
 namespace Grid
 {

@@ -67,19 +67,19 @@ double MCL2D::LikelihoodFieldModelOnce(const Grid::Pos &point, const double &max
     return hit_prob * exp(-distance * distance / (2 * variance * variance)) + rand_prob / max_range;
 }
 
-double MCL2D::calculate_weight(const Particle &particle, const SensorModel &sensor_data, const Grid::Map &map)
+double MCL2D::calculate_weight(const Particle &particle, const Sensor::Model &sensor_data, const Grid::Map &map)
 {
     // パーティクルごとに各点群のマッチングをする
     double weight = 0;
-    const auto pos = Grid::Pos(particle.x, particle.y);
+    const auto pos = Common::RealPos(particle.x, particle.y);
     const auto cos_ = cos(particle.deg * M_PI / 180), sin_ = sin(particle.deg * M_PI / 180);
 
 #pragma omp parallel for reduction(+ : weight)
     for (const auto &s : sensor_data.data)
     {
-        auto data = Grid::Pos(s);
-        auto point = pos + Grid::Pos(data.x * cos_ - data.y * sin_, data.x * sin_ + data.y * cos_);
-        auto p = LikelihoodFieldModelOnce(point, sensor_data.max_range, map);
+        auto data = Common::RealPos(s);
+        auto point = pos + Common::RealPos(data.x * cos_ - data.y * sin_, data.x * sin_ + data.y * cos_);
+        auto p = LikelihoodFieldModelOnce(Grid::Pos(point), sensor_data.max_range, map);
         weight += p;
     }
 

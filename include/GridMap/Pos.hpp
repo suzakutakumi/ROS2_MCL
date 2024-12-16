@@ -2,23 +2,12 @@
 
 #include <utility>
 #include <functional>
+#include "Common/Pos.hpp"
 
 namespace Grid
 {
-    struct Pos : public std::pair<int, int>
-    {
-        using pair::pair;
-
-        template <typename T>
-        Pos(const T &);
-
-        int &x = this->first;
-        int &y = this->second;
-    };
+    using Pos = Common::IntegerPos;
 }
-
-Grid::Pos operator+(const Grid::Pos &x, const Grid::Pos &y);
-Grid::Pos operator-(const Grid::Pos &x, const Grid::Pos &y);
 
 template <class T, class S>
 struct std::hash<std::pair<T, S>>
