@@ -12,8 +12,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/msg/image.hpp>
-
-// #include <opencv2/opencv.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 
 using std::placeholders::_1;
 using namespace std;
@@ -38,33 +37,47 @@ class MclNode : public rclcpp::Node
 public:
   MclNode() : Node("mcl_node")
   {
-    subscription1_ = create_subscription<sensor_msgs::msg::PointCloud2>("/scan", 10, std::bind(&MclNode::scanCallback, this, _1));
-    subscription2_ = create_subscription<sensor_msgs::msg::PointCloud2>("/map", 10, std::bind(&MclNode::registerMap, this, _1));
+    subscription1_ = create_subscription<sensor_msgs::msg::PointCloud2>("scan", 10, std::bind(&MclNode::scanCallback, this, _1));
+    subscription2_ = create_subscription<sensor_msgs::msg::PointCloud2>("map", 10, std::bind(&MclNode::registerMap, this, _1));
 
-    publisher_ = create_publisher<sensor_msgs::msg::Image>("/map_image", 10);
+    publisher_ = create_publisher<sensor_msgs::msg::Image>("map_image", 10);
+    pose_and_likelihoods_publisher_ = create_publisher<std_msgs::msg::Float64MultiArray>("pose_and_likelihoods", 10);
     timer_ = create_wall_timer(500ms, std::bind(&MclNode::image_publisher, this));
 
     // MCLの設定値
     this->declare_parameter("num_of_particle", 10000);
     this->declare_parameter("sigma", 0.04);
     this->declare_parameter("map_threshold", 0.5);
-    this->declare_parameter("max_distance", 4.0);
+    this->declare_parameter("map_max_distance", 4.0);
     this->declare_parameter("variance", 0.5);
+    this->declare_parameter("hit_prob", 0.5);
+    this->declare_parameter("rand_prob", 0.5);
+    this->declare_parameter("resmapling_prob", 0.8);
 
     mcl_config.particle_num = get_parameter("num_of_particle").as_int();
     mcl_config.sigma = get_parameter("sigma").as_double();
     mcl_config.map_threshold = get_parameter("map_threshold").as_double();
-    mcl_config.distance_map_max_value = get_parameter("max_distance").as_double();
+    mcl_config.distance_map_max_value = get_parameter("map_max_distance").as_double();
     mcl_config.variance = get_parameter("variance").as_double();
+    mcl_config.hit_prob = get_parameter("hit_prob").as_double();
+    mcl_config.rand_prob = get_parameter("rand_prob").as_double();
+
+    mcl_config.resmapling_prob = get_parameter("resmapling_prob").as_double();
 
     // MCL以外の値
     this->declare_parameter("map_resolution", 0.05);
     this->declare_parameter("error_ganma", 0.4);
     this->declare_parameter("error_vc", 0.05);
+    this->declare_parameter("max_range", mcl_config.distance_map_max_value);
 
     resolution = get_parameter("map_resolution").as_double();
     ganma = get_parameter("error_ganma").as_double();
     vc = get_parameter("error_vc").as_double();
+    sensor_max_range = get_parameter("max_range").as_double();
+
+    adaptResolution(mcl_config.distance_map_max_value);
+    adaptResolution(mcl_config.rand_prob);
+    adaptResolution(mcl_config.variance);
 
     RCLCPP_INFO(get_logger(), "number of particles, resolution = %d, %f", mcl_config.particle_num, resolution);
   }
@@ -78,6 +91,12 @@ private:
   double resolution;
   double ganma;
   double vc;
+  double sensor_max_range;
+
+  void adaptResolution(double &v)
+  {
+    v /= resolution;
+  }
 
   void adaptResolution(SensorData &ps)
   {
@@ -89,7 +108,22 @@ private:
     }
   }
 
-  void updateGridMap(SensorData pointcloud)
+  void restoreResolution(double &v)
+  {
+    v *= resolution;
+  }
+
+  void restoreResolution(SensorData &ps)
+  {
+    for (auto &p : ps)
+    {
+      p.x *= resolution;
+      p.y *= resolution;
+      p.z *= resolution;
+    }
+  }
+
+  void updateGridMap(SensorData &pointcloud)
   {
     double max_range = mcl_config.distance_map_max_value;
 
@@ -105,15 +139,15 @@ private:
     }
 
     std::queue<std::pair<GridType, GridType>> q;
-    for (auto p : pointcloud)
+    for (auto &p : pointcloud)
     {
       auto pos = GridPos(p);
-      map[pos] = GridValue{1.0, 0.0};
+      if (map.find(pos) != map.end())
+      {
+        continue;
+      }
 
-      map.min_corner.first = std::min(pos.first, map.min_corner.first);
-      map.min_corner.second = std::min(pos.second, map.min_corner.second);
-      map.max_corner.first = std::min(pos.first, map.max_corner.first);
-      map.max_corner.second = std::min(pos.second, map.max_corner.second);
+      map.emplace(pos, GridValue{1.0, 0.0});
 
       q.emplace(pos, pos);
     }
@@ -131,11 +165,20 @@ private:
         auto new_pos = current_pos + r;
         auto distance_vec = new_pos - root_pos;
         auto distance = distance_map[abs(distance_vec.first)][abs(distance_vec.second)];
+        if (distance > max_range)
+          continue;
+
         auto map_itr = map.find(new_pos);
-        if (distance <= max_range and (map_itr == map.end() or distance < map_itr->second.distance))
+        if (map_itr == map.end())
         {
-          double prob = map_itr == map.end() ? 0.0 : map_itr->second.prob;
-          map[current_pos] = GridValue{prob, distance};
+          map.emplace(new_pos, GridValue{0.0, distance});
+
+          q.emplace(new_pos, root_pos);
+        }
+        else if (distance < map_itr->second.distance)
+        {
+          map_itr->second.distance = distance;
+
           q.emplace(new_pos, root_pos);
         }
       }
@@ -144,46 +187,94 @@ private:
 
   void registerMap(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
   {
+    RCLCPP_INFO(get_logger(), "register map");
+
     SensorData pointcloud;
     pcl::fromROSMsg(*msg, pointcloud);
 
     adaptResolution(pointcloud);
 
     updateGridMap(pointcloud);
+
+    mcl = MCL2D(map, mcl_config);
+
+    RCLCPP_INFO(get_logger(), "registered map");
   }
 
   void scanCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
   {
+    RCLCPP_INFO(get_logger(), "start scan");
+
     MotionModel motion_model{0, 0};
     SensorModel sensor_model;
 
     pcl::fromROSMsg(*msg, sensor_model.data);
+    sensor_model.max_range = sensor_max_range;
 
     adaptResolution(sensor_model.data);
+    adaptResolution(sensor_model.max_range);
 
-    if (map_.size() <= 0)
+    if (map.empty())
     {
+      return;
       RCLCPP_INFO(get_logger(), "init");
       updateGridMap(sensor_model.data);
 
       mcl = MCL2D(map, mcl_config);
-      return;
     }
 
-    RCLCPP_INFO(get_logger(), "mcl update");
-    mcl.update(motion_model, sensor_model, map);
-    RCLCPP_DEBUG(get_logger(), "position(%f,%f,%f deg)", mcl.pose.x * resolution, mcl.pose.y * resolution, mcl.pose.deg);
+    RCLCPP_INFO_STREAM(get_logger(), "number of sensor data: " << sensor_model.data.size());
 
-    RCLCPP_INFO(get_logger(), "calc error");
+    // RCLCPP_INFO(get_logger(), "mcl update");
+    mcl.update(motion_model, sensor_model, map);
+    RCLCPP_INFO(get_logger(), "position(%f, %f, %f deg)", mcl.pose.x * resolution, mcl.pose.y * resolution, mcl.pose.deg);
+
+    // RCLCPP_INFO(get_logger(), "calc likelihood");
     vector<pair<double, double>> points;
     for (auto &p : mcl.current_particles)
     {
       points.emplace_back(p.x, p.y);
     }
-    auto error_value = calc_error_ellipse(points, ganma, vc);
-    RCLCPP_DEBUG(get_logger(), "error value:%f", error_value);
+    auto likelihood1 = calc_error_ellipse(points, ganma, vc, resolution);
+    RCLCPP_INFO_STREAM(get_logger(), "likelihood value1:\t" << likelihood1);
 
-    RCLCPP_INFO(get_logger(), "draw image");
+    auto likelihood2 = 1.0;
+    auto likelihood3 = 0.0;
+    auto likelihood4 = 0.0;
+    const auto pos = GridType(mcl.pose.x, mcl.pose.y);
+    const auto cos_ = cos(mcl.pose.deg * M_PI / 180), sin_ = sin(mcl.pose.deg * M_PI / 180);
+    const auto hit_prob = 1.0 - mcl_config.rand_prob / sensor_model.max_range;
+    for (const auto &s : sensor_model.data)
+    {
+      auto data = GridPos(s);
+      auto point = pos + GridType(data.first * cos_ - data.second * sin_, data.first * sin_ + data.second * cos_);
+      auto v = mcl.LikelihoodFieldModelOnce(point, sensor_model.max_range, map, mcl_config.distance_map_max_value, mcl_config.variance, hit_prob, mcl_config.rand_prob);
+      likelihood2 *= v;
+      likelihood3 += v;
+      likelihood4 += log(v);
+    }
+    RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-1(*=):\t" << likelihood2);
+    RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-2(+=):\t" << likelihood3 << ",\t" << likelihood3 / sensor_model.data.size());
+    RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-3(+=log):\t" << likelihood4 << ",\t" << exp(likelihood4));
+
+    std_msgs::msg::Float64MultiArray pose_and_likelihoods;
+    pose_and_likelihoods.data = std_msgs::msg::Float64MultiArray::_data_type{
+        mcl.pose.x,
+        mcl.pose.y,
+        mcl.pose.deg,
+        likelihood1,
+        likelihood2,
+        likelihood3 / sensor_model.data.size(),
+        likelihood3,
+        likelihood4 / sensor_model.data.size(),
+        likelihood4,
+    };
+    restoreResolution(pose_and_likelihoods.data[0]);
+    restoreResolution(pose_and_likelihoods.data[1]);
+
+    pose_and_likelihoods_publisher_->publish(pose_and_likelihoods);
+
+    // RCLCPP_INFO(get_logger(), "draw image");
     draw_image();
   }
 
@@ -193,7 +284,7 @@ private:
     {
       return;
     }
-    RCLCPP_INFO(get_logger(), "publish image");
+    RCLCPP_INFO_ONCE(get_logger(), "publish image");
 
     sensor_msgs::msg::Image image;
     image.height = map_.size();
@@ -216,24 +307,14 @@ private:
 
   void draw_image()
   {
-    if (map_.size() <= 0)
+    if (map.size() <= 0)
     {
       return;
     }
 
     // 最初値・最大値の取得
-    GridType min_range(0, 0), max_range(0, 0);
-    for (auto grid : map)
-    {
-      int x = grid.first.first;
-      int y = grid.first.second;
-
-      min_range.first = std::min(min_range.first, x);
-      min_range.second = std::min(min_range.second, y);
-
-      max_range.first = std::max(max_range.first, x);
-      max_range.second = std::max(max_range.second, y);
-    }
+    auto &min_range = map.min_corner;
+    auto &max_range = map.max_corner;
 
     int width = max_range.first - min_range.first + 1;
     int height = max_range.second - min_range.second + 1;
@@ -245,7 +326,7 @@ private:
       vector<vector<int>> blank_row(width);
       for (int j = 0; j < width; j++)
       {
-        blank_row[j] = vector<int>{255, 0, 255};
+        blank_row[j] = vector<int>{0, 0, 0};
       }
 
       map_[i] = blank_row;
@@ -308,6 +389,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription1_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription2_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr pose_and_likelihoods_publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 

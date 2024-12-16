@@ -4,9 +4,9 @@
 #include <fstream>
 #include <omp.h>
 
-MCL2D::MCL2D(GridMap map, MCLConfig config, bool (*comp)(double, double))
+MCL2D::MCL2D(GridMap map, MCLConfig mcl_config, bool (*comp)(double, double))
 {
-    config = config;
+    config = mcl_config;
     check_blank_func = comp;
 
     pose = Pose{0, 0, 0};
@@ -23,8 +23,8 @@ MCL2D::MCL2D(GridMap map, MCLConfig config, bool (*comp)(double, double))
             auto iter = map.find(GridType(x, y));
             if (iter == map.end() or check_blank_func(iter->second.prob, config.map_threshold))
             {
-                p.x = (double)iter->first.first;
-                p.y = (double)iter->first.second;
+                p.x = (double)x;
+                p.y = (double)y;
                 break;
             }
         }
@@ -50,26 +50,37 @@ void MCL2D::motion_update(const MotionModel &motion)
     }
 }
 
+double MCL2D::LikelihoodFieldModelOnce(const GridType &point, const double &max_range, const GridMap &map)
+{
+    const auto &map_max_distance = config.distance_map_max_value;
+    const auto &variance = config.variance;
+    const auto &hit_prob = config.hit_prob;
+    const auto &rand_prob = config.rand_prob;
+    return LikelihoodFieldModelOnce(point, max_range, map, map_max_distance, variance, hit_prob, rand_prob);
+}
+
+double MCL2D::LikelihoodFieldModelOnce(const GridType &point, const double &max_range, const GridMap &map, const double &map_max_distance, const double &variance, const double &hit_prob, const double &rand_prob)
+{
+    auto map_itr = map.find(point);
+    double distance = map_itr != map.end() ? map_itr->second.distance : map_max_distance;
+
+    return hit_prob * exp(-distance * distance / (2 * variance * variance)) + rand_prob / max_range;
+}
+
 double MCL2D::calculate_weight(const Particle &particle, const SensorModel &sensor_data, const GridMap &map)
 {
     // パーティクルごとに各点群のマッチングをする
     double weight = 0;
-    const double variance = config.variance;
+    const auto pos = GridType(particle.x, particle.y);
+    const auto cos_ = cos(particle.deg * M_PI / 180), sin_ = sin(particle.deg * M_PI / 180);
+
 #pragma omp parallel for reduction(+ : weight)
     for (const auto &s : sensor_data.data)
     {
-        auto map_itr = map.find(GridPos(s));
-        double distance = 0;
-        if (map_itr != map.end())
-        {
-            distance = map_itr->second.distance;
-        }
-        else
-        {
-            distance = config.distance_map_max_value;
-        }
-
-        weight += config.hit_prob * exp(-distance * distance / (2 * variance * variance));
+        auto data = GridPos(s);
+        auto point = pos + GridType(data.first * cos_ - data.second * sin_, data.first * sin_ + data.second * cos_);
+        auto p = LikelihoodFieldModelOnce(point, sensor_data.max_range, map);
+        weight += p;
     }
 
     return weight;
@@ -79,16 +90,17 @@ Pose MCL2D::prediction_pose()
 {
     current_particles = particles;
 
-    double current_angle = pose.deg;
     Pose new_pose{0, 0, 0};
+    double deg_x = 0, deg_y = 0;
     for (auto p : particles)
     {
         new_pose.x += p.x * p.weight;
         new_pose.y += p.y * p.weight;
 
-        new_pose.deg += utils::deg_mod(current_angle - p.deg) * p.weight;
+        deg_x += cos(p.deg * M_PI / 180) * p.weight;
+        deg_y += sin(p.deg * M_PI / 180) * p.weight;
     }
-    new_pose.deg = utils::deg_mod(current_angle - new_pose.deg);
+    new_pose.deg = utils::deg_mod(atan2(deg_y, deg_x) * 180 / M_PI);
     return new_pose;
 }
 
@@ -102,15 +114,17 @@ void MCL2D::resampling(const GridMap &map)
         {
             double var = utils::common_random::randdouble(0, 1);
             double sum = 0;
+            Particle new_p;
             for (auto p : particles)
             {
                 sum += p.weight;
                 if (var <= sum)
                 {
-                    new_particles.push_back(p);
+                    new_p = p;
                     break;
                 }
             }
+            new_particles.push_back(new_p);
         }
         else
         {
@@ -122,8 +136,8 @@ void MCL2D::resampling(const GridMap &map)
                 auto iter = map.find(GridType(x, y));
                 if (iter == map.end() or check_blank_func(iter->second.prob, config.map_threshold))
                 {
-                    p.x = (double)iter->first.first;
-                    p.y = (double)iter->first.second;
+                    p.x = (double)x;
+                    p.y = (double)y;
                     break;
                 }
             }
@@ -132,7 +146,7 @@ void MCL2D::resampling(const GridMap &map)
             new_particles.push_back(p);
         }
     }
-    particles = new_particles;
+    particles = std::move(new_particles);
 }
 
 void MCL2D::debug()

@@ -10,7 +10,7 @@ template <typename PoseType, typename MotionModelType, typename SensorModelType,
 class AbstructMCL
 {
 public:
-    AbstructMCL(){};
+    AbstructMCL() {};
 
     void update(const MotionModelType &motion, const SensorModelType &sensor_data, const MapType &map)
     {
@@ -57,7 +57,7 @@ private:
         // calculate weights of particles
         double weight_sum = 0;
 
-        #pragma omp parallel for
+#pragma omp parallel for reduction(+ : weight_sum)
         for (auto &p : particles)
         {
             p.weight = calculate_weight(p, sensor_data, map);

@@ -1,19 +1,20 @@
 #include "Error.hpp"
 #include <iostream>
+#include <cmath>
 
 using std::cout;
 using std::endl;
 
 inline double calc_eigenvalue1(double &x, double &y, double &xy)
 {
-    return (x + y) / 2 + sqrt((x - y) * (x - y) / 4 + xy * xy);
+    return ((x + y) + sqrt((x - y) * (x - y) + 4 * xy * xy)) / 2;
 }
 inline double calc_eigenvalue2(double &x, double &y, double &xy)
 {
-    return (x + y) / 2 - sqrt((x - y) * (x - y) / 4 + xy * xy);
+    return ((x + y) - sqrt((x - y) * (x - y) + 4 * xy * xy)) / 2;
 }
 
-double calc_error_ellipse(const std::vector<std::pair<double, double>> &points, double ganma, double vc)
+double calc_error_ellipse(const std::vector<std::pair<double, double>> &points, double ganma, double vc, double resolution)
 {
     double mean_x = 0, mean_y = 0;
     for (auto &p : points)
@@ -39,8 +40,8 @@ double calc_error_ellipse(const std::vector<std::pair<double, double>> &points, 
     auto lambda1 = calc_eigenvalue1(variance_x, variance_y, variance_xy);
     auto lambda2 = calc_eigenvalue2(variance_x, variance_y, variance_xy);
 
-    auto ra = sqrt(lambda1);
-    auto rb = sqrt(lambda2);
+    auto ra = sqrt(lambda1) * resolution;
+    auto rb = sqrt(lambda2) * resolution;
 
     return exp(-ganma * (ra * ra + rb * rb)) + vc;
 }
