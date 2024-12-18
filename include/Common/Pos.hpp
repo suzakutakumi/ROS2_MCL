@@ -10,15 +10,17 @@ namespace Common
         using std::pair<T, T>::pair;
 
         template <typename V>
-        Pos(const Pos<V> &v) : Pos(static_cast<T>(v.x), static_cast<T>(v.y))
+        Pos(const Pos<V> &v) : Pos(static_cast<T>(v.x()), static_cast<T>(v.y()))
         {
         }
 
         template <typename V>
         Pos(const V &);
 
-        T &x = this->first;
-        T &y = this->second;
+        T &x()  { return this->first; };
+        T &y()  { return this->second; };
+        const T& x() const { return this->first; };
+        const T& y() const { return this->second; };
     };
 
     using RealPos = Pos<double>;

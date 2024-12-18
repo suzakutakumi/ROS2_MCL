@@ -8,7 +8,9 @@ namespace Grid
     {
         using pair::pair;
 
-        double &prob = this->first;
-        double &distance = this->second;
+        double &prob() { return this->first; };
+        double &distance() { return this->second; };
+        const double& prob() const { return this->first; };
+        const double& distance() const { return this->second; };
     };
 }

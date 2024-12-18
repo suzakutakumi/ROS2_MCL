@@ -143,7 +143,7 @@ private:
     std::queue<std::pair<Grid::Pos, Grid::Pos>> q;
     for (auto &p : pointcloud)
     {
-      auto pos = Grid::Pos(p);
+      const auto pos = Grid::Pos(p);
       if (map.find(pos) != map.end())
       {
         continue;
@@ -166,7 +166,7 @@ private:
       {
         auto new_pos = current_pos + r;
         auto distance_vec = new_pos - root_pos;
-        auto distance = distance_map[abs(distance_vec.x)][abs(distance_vec.y)];
+        auto distance = distance_map[abs(distance_vec.x())][abs(distance_vec.y())];
         if (distance > max_range)
           continue;
 
@@ -177,9 +177,9 @@ private:
 
           q.emplace(new_pos, root_pos);
         }
-        else if (distance < map_itr->second.distance)
+        else if (distance < map_itr->second.distance())
         {
-          map_itr->second.distance = distance;
+          map_itr->second.distance() = distance;
 
           q.emplace(new_pos, root_pos);
         }
@@ -336,10 +336,10 @@ private:
     // 障害物の状態を表示
     for (auto grid : map)
     {
-      if (grid.second.prob > 0.4)
+      if (grid.second.prob() > 0.4)
       {
         map_[grid.first.second - min_range.second][grid.first.first - min_range.first] =
-            vector<int>(3, (int)(255 * grid.second.prob));
+            vector<int>(3, (int)(255 * grid.second.prob()));
       }
     }
 
