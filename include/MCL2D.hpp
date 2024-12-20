@@ -3,16 +3,17 @@
 #include "MCL_Abstruct.hpp"
 #include "GridMap/Map.hpp"
 #include "Sensor.hpp"
+#include "Utility/Angle.hpp"
 
 struct Pose
 {
     double x, y;
-    double deg;
+    Utility::Angle angle;
 };
 struct MotionModel
 {
     double delta_distance;
-    double delta_degree;
+    Utility::Angle delta_angle;
 };
 
 struct MCLConfig

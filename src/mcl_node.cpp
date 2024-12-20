@@ -19,21 +19,6 @@
 using std::placeholders::_1;
 using namespace std;
 
-double deg_mod(double deg)
-{
-  while (deg < 0.0f)
-  {
-    deg += 360.0f;
-  }
-
-  while (deg >= 360.0f)
-  {
-    deg -= 360.0f;
-  }
-
-  return deg;
-}
-
 class MclNode : public rclcpp::Node
 {
 public:
@@ -207,7 +192,7 @@ private:
   {
     RCLCPP_INFO(get_logger(), "start scan");
 
-    MotionModel motion_model{0, 0};
+    MotionModel motion_model{};
     Sensor::Model sensor_model;
 
     pcl::fromROSMsg(*msg, sensor_model.data);
@@ -229,7 +214,7 @@ private:
 
     // RCLCPP_INFO(get_logger(), "mcl update");
     mcl.update(motion_model, sensor_model, map);
-    RCLCPP_INFO(get_logger(), "position(%f, %f, %f deg)", mcl.pose.x * resolution, mcl.pose.y * resolution, mcl.pose.deg);
+    RCLCPP_INFO(get_logger(), "position(%f, %f, %f deg)", mcl.pose.x * resolution, mcl.pose.y * resolution, mcl.pose.angle.get_degree());
 
     // RCLCPP_INFO(get_logger(), "calc likelihood");
     vector<pair<double, double>> points;
@@ -244,7 +229,7 @@ private:
     auto likelihood3 = 0.0;
     auto likelihood4 = 0.0;
     const auto pos = Common::RealPos(mcl.pose.x, mcl.pose.y);
-    const auto cos_ = cos(mcl.pose.deg * M_PI / 180), sin_ = sin(mcl.pose.deg * M_PI / 180);
+    const auto cos_ = mcl.pose.angle.cos(), sin_ = mcl.pose.angle.sin();
     const auto hit_prob = 1.0 - mcl_config.rand_prob / sensor_model.max_range;
     for (const auto &s : sensor_model.data)
     {
@@ -263,7 +248,7 @@ private:
     pose_and_likelihoods.data = std_msgs::msg::Float64MultiArray::_data_type{
         mcl.pose.x,
         mcl.pose.y,
-        mcl.pose.deg,
+        mcl.pose.angle.get_radian(),
         likelihood1,
         likelihood2,
         likelihood3 / sensor_model.data.size(),
@@ -318,8 +303,8 @@ private:
     auto &min_range = map.min_corner;
     auto &max_range = map.max_corner;
 
-    int width = max_range.first - min_range.first + 1;
-    int height = max_range.second - min_range.second + 1;
+    int width = (max_range - min_range).x() + 1;
+    int height = (max_range - min_range).y() + 1;
 
     // 地図初期化
     map_ = vector<vector<vector<int>>>(height);
@@ -334,11 +319,12 @@ private:
       map_[i] = blank_row;
     }
     // 障害物の状態を表示
-    for (auto grid : map)
+    for (auto &grid : map)
     {
       if (grid.second.prob() > 0.4)
       {
-        map_[grid.first.second - min_range.second][grid.first.first - min_range.first] =
+        auto pos = grid.first - min_range;
+        map_[pos.y()][pos.x()] =
             vector<int>(3, (int)(255 * grid.second.prob()));
       }
     }
@@ -348,8 +334,8 @@ private:
                                        { return a.weight < b.weight; });
     for (auto &p : mcl.current_particles)
     {
-      auto x = (int)p.x - min_range.first;
-      auto y = (int)p.y - min_range.second;
+      auto x = (int)p.x - min_range.x();
+      auto y = (int)p.y - min_range.y();
       if (0 > y or y >= height or 0 > x or x >= width)
         continue;
       auto color = (int)(200 - p.weight * 200 / max_weight->weight);
@@ -363,7 +349,20 @@ private:
     {
       for (int j = -1; j <= 1; j++)
       {
-        auto y = -min_range.second + i, x = -min_range.first + j;
+        auto y = -min_range.y() + i, x = -min_range.x() + j;
+        if (0 > y or y >= height or 0 > x or x >= width)
+          continue;
+        map_[y][x][0] = 0;
+        map_[y][x][1] = 0;
+        map_[y][x][2] = 255;
+      }
+    }
+    // 向きも表示
+    {
+      for (int i = 0; i < 10; i++)
+      {
+        auto x = (int)(-min_range.x() + i);
+        auto y = (int)(-min_range.y());
         if (0 > y or y >= height or 0 > x or x >= width)
           continue;
         map_[y][x][0] = 0;
@@ -377,7 +376,22 @@ private:
     {
       for (int j = -1; j <= 1; j++)
       {
-        auto y = (int)mcl.pose.y - min_range.second + i, x = (int)mcl.pose.x - min_range.first + j;
+        auto y = (int)mcl.pose.y - min_range.y() + i, x = (int)mcl.pose.x - min_range.x() + j;
+        if (0 > y or y >= height or 0 > x or x >= width)
+          continue;
+
+        map_[y][x][0] = 0;
+        map_[y][x][1] = 255;
+        map_[y][x][2] = 0;
+      }
+    }
+    // 向きも表示
+    {
+      auto x_step = mcl.pose.angle.cos(), y_step = mcl.pose.angle.sin();
+      for (int i = 0; i < 10; i++)
+      {
+        auto x = (int)(mcl.pose.x - min_range.x() + x_step * i);
+        auto y = (int)(mcl.pose.y - min_range.y() + y_step * i);
         if (0 > y or y >= height or 0 > x or x >= width)
           continue;
 
