@@ -263,6 +263,7 @@ private:
 
     // RCLCPP_INFO(get_logger(), "draw image");
     draw_image();
+    draw_image_now_state(mcl.pose, sensor_model);
   }
 
   void image_publisher()
@@ -402,6 +403,34 @@ private:
     }
   }
 
+  void draw_image_now_state(Pose &pose, Sensor::Model &sensor_model)
+  {
+    if (map.size() <= 0)
+    {
+      return;
+    }
+
+    auto pos = Common::RealPos(pose.x, pose.y);
+    auto cos_ = pose.angle.cos(), sin_ = pose.angle.sin();
+#pragma omp parallel for
+    for (const auto &s : sensor_model.data)
+    {
+      auto data = Common::RealPos(s);
+      auto point = pos + Common::RealPos(data.x() * cos_ - data.y() * sin_, data.x() * sin_ + data.y() * cos_);
+
+      auto y = (Grid::Pos(point) - map.min_corner).y();
+      auto x = (Grid::Pos(point) - map.min_corner).x();
+
+      int width = (map.max_corner - map.min_corner).x() + 1;
+      int height = (map.max_corner - map.min_corner).y() + 1;
+      if (0 > y or y >= height or 0 > x or x >= width)
+        continue;
+
+      map_[y][x][0] = 0;
+      // map_[y][x][1] = 255;
+      map_[y][x][2] = 255;
+    }
+  }
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription1_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription2_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
