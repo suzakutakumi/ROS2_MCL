@@ -244,17 +244,96 @@ private:
     RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-2(+=):\t" << likelihood3 << ",\t" << likelihood3 / sensor_model.data.size());
     RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-3(+=log):\t" << likelihood4 << ",\t" << exp(likelihood4));
 
+    // 2D LiDARデータへ変換し、360度分の最短距離で尤度計算をする
+    double sensor_likelihood = 0;
+    int number_of_correct = 0;
+    std::map<Utility::Angle, std::pair<Common::RealPos, double>> laser_data;
+    for (const auto &s : sensor_model.data)
+    {
+      auto data = Common::RealPos(s);
+      auto angle = Utility::Angle::FromRadian(std::atan2(data.y(), data.x()));
+      auto distance = sqrt(data.x() * data.x() + data.y() * data.y());
+
+      auto iter = laser_data.find(angle);
+      if (iter != laser_data.end() and iter->second.second < distance)
+      {
+        continue;
+      }
+
+      laser_data.emplace(angle, std::make_pair(data, distance));
+    }
+
+    const double increment_unit = 1.0;
+    double min_distance;
+    bool check_exist_laser = false;
+    Common::RealPos min_data;
+
+    {
+      auto iter = laser_data.rbegin();
+      while (iter != laser_data.rend() and iter->first > Utility::Angle::FromDegree(360.0 - increment_unit / 2.0))
+      {
+        if (not check_exist_laser or iter->second.second < min_distance)
+        {
+          min_data = iter->second.first;
+          min_distance = iter->second.second;
+          check_exist_laser = true;
+        }
+        iter++;
+      }
+    }
+
+    auto laser_iter = laser_data.begin();
+    for (double angle = 0.0; angle < 360.0; angle += increment_unit)
+    {
+      while (laser_iter != laser_data.end() and laser_iter->first < Utility::Angle::FromDegree(angle + increment_unit / 2.0))
+      {
+        if (laser_iter->first < Utility::Angle::FromDegree(angle - increment_unit / 2.0))
+        {
+          laser_iter++;
+          continue;
+        }
+
+        if (not check_exist_laser or laser_iter->second.second < min_distance)
+        {
+          min_data = laser_iter->second.first;
+          min_distance = laser_iter->second.second;
+          check_exist_laser = true;
+        }
+        laser_iter++;
+      }
+
+      double v;
+      if (check_exist_laser)
+      {
+        auto point = pos + Common::RealPos(min_data.x() * cos_ - min_data.y() * sin_, min_data.x() * sin_ + min_data.y() * cos_);
+        v = mcl.LikelihoodFieldModelOnce(Grid::Pos(point), sensor_model.max_range, map, mcl_config.distance_map_max_value, mcl_config.variance, hit_prob, mcl_config.rand_prob);
+        number_of_correct++;
+      }
+      else
+      {
+        v = 0.2;
+      }
+      sensor_likelihood += log(v);
+
+      min_data = Common::RealPos{};
+      min_distance = __DBL_MAX__;
+      check_exist_laser = false;
+    }
+
     std_msgs::msg::Float64MultiArray pose_and_likelihoods;
     pose_and_likelihoods.data = std_msgs::msg::Float64MultiArray::_data_type{
         mcl.pose.x,
         mcl.pose.y,
         mcl.pose.angle.get_radian(),
         likelihood1,
-        likelihood2,
-        likelihood3 / sensor_model.data.size(),
-        likelihood3,
+        // likelihood2,
+        // likelihood3 / sensor_model.data.size(),
+        // likelihood3,
         likelihood4 / sensor_model.data.size(),
         likelihood4,
+        sensor_likelihood,
+        (double)number_of_correct,
+        (double)number_of_correct / (360 / increment_unit),
     };
     restoreResolution(pose_and_likelihoods.data[0]);
     restoreResolution(pose_and_likelihoods.data[1]);

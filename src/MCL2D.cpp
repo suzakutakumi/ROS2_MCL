@@ -79,10 +79,10 @@ double MCL2D::calculate_weight(const Particle &particle, const Sensor::Model &se
         auto data = Common::RealPos(s);
         auto point = pos + Common::RealPos(data.x() * cos_ - data.y() * sin_, data.x() * sin_ + data.y() * cos_);
         auto p = LikelihoodFieldModelOnce(Grid::Pos(point), sensor_data.max_range, map);
-        weight += p;
+        weight += p * p * p;
     }
 
-    return weight;
+    return particle.weight * weight;
 }
 
 Pose MCL2D::prediction_pose()
@@ -123,6 +123,7 @@ void MCL2D::resampling(const Grid::Map &map)
                     break;
                 }
             }
+            new_p.weight = 1.0;
             new_particles.push_back(new_p);
         }
         else

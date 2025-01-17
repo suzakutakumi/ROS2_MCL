@@ -78,6 +78,26 @@ namespace Utility
             return cls;
         }
 
+        bool operator<(const Angle &r) const
+        {
+            return get_radian() < r.get_radian();
+        }
+
+        bool operator<=(const Angle &r) const
+        {
+            return get_radian() <= r.get_radian();
+        }
+
+        bool operator>(const Angle &r) const
+        {
+            return get_radian() > r.get_radian();
+        }
+
+        bool operator>=(const Angle &r) const
+        {
+            return get_radian() >= r.get_radian();
+        }
+
     private:
         double angle;
 
