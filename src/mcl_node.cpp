@@ -185,7 +185,7 @@ private:
 
     mcl = MCL2D(map, mcl_config);
 
-    RCLCPP_INFO(get_logger(), "registered map");
+    draw_image();
   }
 
   void scanCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
@@ -340,7 +340,6 @@ private:
 
     pose_and_likelihoods_publisher_->publish(pose_and_likelihoods);
 
-    // RCLCPP_INFO(get_logger(), "draw image");
     draw_image();
     draw_image_now_state(mcl.pose, sensor_model);
   }
@@ -351,7 +350,7 @@ private:
     {
       return;
     }
-    RCLCPP_INFO_ONCE(get_logger(), "publish image");
+    RCLCPP_INFO(get_logger(), "publish image");
 
     sensor_msgs::msg::Image image;
     image.height = map_.size();

@@ -15,18 +15,11 @@ MCL2D::MCL2D(Grid::Map map, MCLConfig mcl_config, bool (*comp)(double, double))
     for (int i = 0; i < config.particle_num; i++)
     {
         Particle p;
-        while (true)
-        {
-            int x = Utility::Random::Integer(map.min_corner.x(), map.max_corner.x());
-            int y = Utility::Random::Integer(map.min_corner.y(), map.max_corner.y());
-            auto iter = map.find(Grid::Pos(x, y));
-            if (iter == map.end() or check_blank_func(iter->second.prob(), config.map_threshold))
-            {
-                p.x = (double)x;
-                p.y = (double)y;
-                break;
-            }
-        }
+        int x = Utility::Random::Integer(map.min_corner.x(), map.max_corner.x());
+        int y = Utility::Random::Integer(map.min_corner.y(), map.max_corner.y());
+
+        p.x = (double)x;
+        p.y = (double)y;
         p.angle.set_degree(Utility::Random::Real(0, 359));
         p.weight = 1.0 / config.particle_num;
         particles.push_back(p);
@@ -107,45 +100,77 @@ void MCL2D::resampling(const Grid::Map &map)
 {
     std::vector<Particle> new_particles;
     new_particles.clear();
-    for (std::size_t i = 0; i < particles.size(); i++)
+
+    double ess = 0.0;
+    for (auto &p : particles)
     {
-        if (Utility::Random::Real(0.0, 1.0) < config.resmapling_prob)
-        {
-            double var = Utility::Random::Real(0.0, 1.0);
-            double sum = 0;
-            Particle new_p;
-            for (auto p : particles)
-            {
-                sum += p.weight;
-                if (var <= sum)
-                {
-                    new_p = p;
-                    break;
-                }
-            }
-            new_p.weight = 1.0;
-            new_particles.push_back(new_p);
-        }
-        else
-        {
-            Particle p;
-            while (true)
-            {
-                int x = Utility::Random::Integer(map.min_corner.x(), map.max_corner.x());
-                int y = Utility::Random::Integer(map.min_corner.y(), map.max_corner.y());
-                auto iter = map.find(Grid::Pos(x, y));
-                if (iter == map.end() or check_blank_func(iter->second.prob(), config.map_threshold))
-                {
-                    p.x = (double)x;
-                    p.y = (double)y;
-                    break;
-                }
-            }
-            p.angle.set_degree(Utility::Random::Real(0, 359));
-            p.weight = 1.0;
-            new_particles.push_back(p);
-        }
+        ess += p.weight * p.weight;
     }
+    ess = 1.0 / ess;
+
+    // resampling
+    if (ess > 0.5 * particles.size())
+    {
+        return;
+    }
+    else
+    {
+        // low-variance resampling
+        double step = 1.0 / config.particle_num;
+        double start = Utility::Random::Real(0.0, step);
+        double target_weight = start;
+        double sum_weight = 0.0;
+        int index = -1;
+        for (std::size_t i = 0; i < config.particle_num; i++)
+        {
+            while (target_weight > sum_weight)
+            {
+                index++;
+                sum_weight += particles[index].weight;
+            }
+            new_particles.push_back(particles[index]);
+            target_weight += step;
+        }
+
+        // random resampling方法もある
+        // std::vector<bool> check_exist(particles.size(), false);
+        // for (std::size_t i = 0; i < config.particle_num; i++)
+        // {
+        //     if (Utility::Random::Real(0.0, 1.0) < config.resmapling_prob)
+        //     {
+        //         // random_sampliing
+        //         Particle p;
+        //         int x = Utility::Random::Integer(map.min_corner.x(), map.max_corner.x());
+        //         int y = Utility::Random::Integer(map.min_corner.y(), map.max_corner.y());
+
+        //         p.x = (double)x;
+        //         p.y = (double)y;
+        //         p.angle.set_degree(Utility::Random::Real(0, 359));
+        //         p.weight = 1.0 / config.particle_num;
+
+        //         new_particles.push_back(p);
+        //     }
+        //     else
+        //     {
+        //         double var = Utility::Random::Real(0.0, 1.0);
+        //         double sum = 0;
+        //         std::size_t index = 0;
+        //         for (std::size_t j = 0; j < particles.size(); j++)
+        //         {
+        //             sum += particles[j].weight;
+        //             if (var <= sum)
+        //             {
+        //                 index = j;
+        //                 break;
+        //             }
+        //         }
+
+        //         check_exist[index] = true;
+        //         new_particles.push_back(particles[index]);
+        //     }
+        // }
+    }
+
     particles = std::move(new_particles);
 }
 
