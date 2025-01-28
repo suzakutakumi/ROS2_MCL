@@ -121,7 +121,7 @@ void MCL2D::resampling(const Grid::Map &map)
         double target_weight = start;
         double sum_weight = 0.0;
         int index = -1;
-        for (std::size_t i = 0; i < config.particle_num; i++)
+        for (int i = 0; i < config.particle_num; i++)
         {
             while (target_weight > sum_weight)
             {
