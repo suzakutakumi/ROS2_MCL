@@ -40,6 +40,7 @@ public:
     this->declare_parameter("hit_prob", 0.5);
     this->declare_parameter("rand_prob", 0.5);
     this->declare_parameter("resmapling_prob", 0.8);
+    this->declare_parameter("init_pos", std::vector<double>{});
 
     mcl_config.particle_num = get_parameter("num_of_particle").as_int();
     mcl_config.sigma = get_parameter("sigma").as_double();
@@ -50,6 +51,7 @@ public:
     mcl_config.rand_prob = get_parameter("rand_prob").as_double();
 
     mcl_config.resmapling_prob = get_parameter("resmapling_prob").as_double();
+    auto init_pos = get_parameter("init_pos").as_double_array();
 
     // MCL以外の値
     this->declare_parameter("map_resolution", 0.05);
@@ -65,6 +67,12 @@ public:
     adaptResolution(mcl_config.distance_map_max_value);
     adaptResolution(mcl_config.rand_prob);
     adaptResolution(mcl_config.variance);
+    if (init_pos.size() >= 2)
+    {
+      std::for_each(init_pos.begin(), init_pos.end(), [&](double &v)
+                    { adaptResolution(v); });
+      mcl_config.init_pos = std::make_shared<Common::RealPos>(Common::RealPos(init_pos[0], init_pos[1]));
+    }
 
     RCLCPP_INFO(get_logger(), "number of particles, resolution = %d, %f", mcl_config.particle_num, resolution);
   }

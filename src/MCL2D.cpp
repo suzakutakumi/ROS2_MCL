@@ -3,6 +3,7 @@
 #include "Utility/Angle.hpp"
 #include <iostream>
 #include <fstream>
+#include <cmath>
 #include <omp.h>
 
 MCL2D::MCL2D(Grid::Map map, MCLConfig mcl_config, bool (*comp)(double, double))
@@ -10,19 +11,37 @@ MCL2D::MCL2D(Grid::Map map, MCLConfig mcl_config, bool (*comp)(double, double))
     config = mcl_config;
     check_blank_func = comp;
 
-    // Global Localization
-    particles.clear();
-    for (int i = 0; i < config.particle_num; i++)
+    if (config.init_pos != nullptr)
     {
-        Particle p;
-        int x = Utility::Random::Integer(map.min_corner.x(), map.max_corner.x());
-        int y = Utility::Random::Integer(map.min_corner.y(), map.max_corner.y());
+        // Localization
+        particles.clear();
+        for (int i = 0; i < config.particle_num; i++)
+        {
+            Particle p;
+            p.x = Utility::Random::NormalDistribution(config.init_pos->x(), 2 * config.sigma);
+            p.y = Utility::Random::NormalDistribution(config.init_pos->y(), 2 * config.sigma);
 
-        p.x = (double)x;
-        p.y = (double)y;
-        p.angle.set_degree(Utility::Random::Real(0, 359));
-        p.weight = 1.0 / config.particle_num;
-        particles.push_back(p);
+            p.angle.set_degree(Utility::Random::Real(0, 359));
+            p.weight = 1.0 / config.particle_num;
+            particles.push_back(p);
+        }
+    }
+    else
+    {
+        // Global Localization
+        particles.clear();
+        for (int i = 0; i < config.particle_num; i++)
+        {
+            Particle p;
+            int x = Utility::Random::Integer(map.min_corner.x(), map.max_corner.x());
+            int y = Utility::Random::Integer(map.min_corner.y(), map.max_corner.y());
+
+            p.x = (double)x;
+            p.y = (double)y;
+            p.angle.set_degree(Utility::Random::Real(0, 359));
+            p.weight = 1.0 / config.particle_num;
+            particles.push_back(p);
+        }
     }
 
     current_particles = particles;
@@ -33,12 +52,13 @@ void MCL2D::motion_update(const MotionModel &motion)
 {
     for (auto &p : particles)
     {
-        auto dis = Utility::Random::NormalDistribution(motion.delta_distance, config.sigma);
-        auto angle = Utility::Random::NormalDistribution(motion.delta_angle.get_radian(), config.sigma);
+        auto dx = Utility::Random::NormalDistribution(motion.delta_distance, config.sigma);
+        auto dy = Utility::Random::NormalDistribution(motion.delta_distance, config.sigma);
+        auto angle = Utility::Random::NormalDistribution(motion.delta_angle.get_degree(), 2.0);
 
-        p.x += dis * p.angle.cos();
-        p.y += dis * p.angle.sin();
-        p.angle += Utility::Angle::FromRadian(angle);
+        p.x += dx;
+        p.y += dy;
+        p.angle += Utility::Angle::FromDegree(angle);
     }
 }
 
@@ -63,17 +83,21 @@ double MCL2D::calculate_weight(const Particle &particle, const Sensor::Model &se
 {
     // パーティクルごとに各点群のマッチングをする
     double weight = 0;
+    double weight_log = 0;
     const auto pos = Common::RealPos(particle.x, particle.y);
     const auto cos_ = particle.angle.cos(), sin_ = particle.angle.sin();
 
-#pragma omp parallel for reduction(+ : weight)
+#pragma omp parallel for reduction(+ : weight, weight_log)
     for (const auto &s : sensor_data.data)
     {
         auto data = Common::RealPos(s);
         auto point = pos + Common::RealPos(data.x() * cos_ - data.y() * sin_, data.x() * sin_ + data.y() * cos_);
         auto p = LikelihoodFieldModelOnce(Grid::Pos(point), sensor_data.max_range, map);
         weight += p * p * p;
+        weight_log += log(p);
     }
+
+    weight_total += exp(weight_log / sensor_data.data.size());
 
     return particle.weight * weight;
 }
@@ -108,12 +132,11 @@ void MCL2D::resampling(const Grid::Map &map)
     }
     ess = 1.0 / ess;
 
-    // resampling
     if (ess > 0.5 * particles.size())
     {
         return;
     }
-    else
+
     {
         // low-variance resampling
         double step = 1.0 / config.particle_num;

@@ -27,6 +27,8 @@ struct MCLConfig
     double rand_prob;              // 測定のノイズがのっている場合の信頼度
 
     double resmapling_prob; // 統計的なリサンプリングになる確率
+
+    std::shared_ptr<Common::RealPos> init_pos = nullptr;
 };
 
 class MCL2D : public AbstructMCL<Pose, MotionModel, Sensor::Model, Grid::Map>
@@ -45,6 +47,8 @@ public:
     double LikelihoodFieldModelOnce(const Grid::Pos &point, const double &max_range, const Grid::Map &map, const double &map_max_distance, const double &variance, const double &hit_prob, const double &rand_prob);
 
 private:
+    double weight_total = 0;
+
     void motion_update(const MotionModel &motion) override;
 
     double calculate_weight(const Particle &particle, const Sensor::Model &sensor_data, const Grid::Map &map) override;
