@@ -5,17 +5,19 @@
 #include <pcl/filters/passthrough.h>
 #include <pcl/common/transforms.h>
 
+#include "Utility/Angle.hpp"
 #include "Common/Pos.hpp"
 
 namespace Sensor
 {
     using One = pcl::PointXYZRGB;
-    using Data = pcl::PointCloud<One>;
+    using Data=std::map<Utility::Angle,double>;
 
     struct Model
     {
         Data data;
         double max_range;
+        double increment_angle;
     };
 }
 

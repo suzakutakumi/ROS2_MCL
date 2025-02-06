@@ -93,7 +93,7 @@ private:
     v /= resolution;
   }
 
-  void adaptResolution(Sensor::Data &ps)
+  void adaptResolution(pcl::PointCloud<pcl::PointXYZRGB> &ps)
   {
     for (auto &p : ps)
     {
@@ -102,13 +102,20 @@ private:
       p.z /= resolution;
     }
   }
+  void adaptResolution(Sensor::Data &ps)
+  {
+    for (auto &p : ps)
+    {
+      adaptResolution(p.second);
+    }
+  }
 
   void restoreResolution(double &v)
   {
     v *= resolution;
   }
 
-  void restoreResolution(Sensor::Data &ps)
+  void restoreResolution(pcl::PointCloud<pcl::PointXYZRGB> &ps)
   {
     for (auto &p : ps)
     {
@@ -118,7 +125,15 @@ private:
     }
   }
 
-  void updateGridMap(Sensor::Data &pointcloud)
+  void restoreResolution(Sensor::Data &ps)
+  {
+    for (auto &p : ps)
+    {
+      restoreResolution(p.second);
+    }
+  }
+
+  void updateGridMap(pcl::PointCloud<pcl::PointXYZRGB> &pointcloud)
   {
     double max_range = mcl_config.distance_map_max_value;
 
@@ -184,7 +199,7 @@ private:
   {
     RCLCPP_INFO(get_logger(), "register map");
 
-    Sensor::Data pointcloud;
+    pcl::PointCloud<pcl::PointXYZRGB> pointcloud;
     pcl::fromROSMsg(*msg, pointcloud);
 
     adaptResolution(pointcloud);
@@ -200,25 +215,49 @@ private:
   {
     RCLCPP_INFO(get_logger(), "start scan");
 
-    MotionModel motion_model{};
-    Sensor::Model sensor_model;
-
-    pcl::fromROSMsg(*msg, sensor_model.data);
-    sensor_model.max_range = sensor_max_range;
-
-    adaptResolution(sensor_model.data);
-    adaptResolution(sensor_model.max_range);
-
     if (map.empty())
     {
       return;
-      RCLCPP_INFO(get_logger(), "init");
-      updateGridMap(sensor_model.data);
+      // RCLCPP_INFO(get_logger(), "init");
+      // updateGridMap(sensor_model.data);
 
-      mcl = MCL2D(map, mcl_config);
+      // mcl = MCL2D(map, mcl_config);
     }
 
-    RCLCPP_INFO_STREAM(get_logger(), "number of sensor data: " << sensor_model.data.size());
+    pcl::PointCloud<pcl::PointXYZRGB> sensor_data;
+    pcl::fromROSMsg(*msg, sensor_data);
+    adaptResolution(sensor_data);
+
+    RCLCPP_INFO_STREAM(get_logger(), "number of sensor data: " << sensor_data.size());
+
+    MotionModel motion_model{};
+    Sensor::Model sensor_model;
+    sensor_model.max_range = sensor_max_range;
+    sensor_model.increment_angle = 1;
+    sensor_model.data.clear();
+
+    for (const auto &s : sensor_data)
+    {
+      auto data = Common::RealPos(s);
+      auto angle = Utility::Angle::FromRadian(std::atan2(data.y(), data.x()));
+      auto distance = std::sqrt(data.x() * data.x() + data.y() * data.y());
+
+      auto correct_angle = Utility::Angle::FromDegree(((int)(angle.get_degree() / sensor_model.increment_angle) % (int)(360 / sensor_model.increment_angle)) * sensor_model.increment_angle);
+
+      auto check = sensor_model.data.find(correct_angle);
+      if (check != sensor_model.data.end() and check->second < distance)
+      {
+        // iter = sensor_data.erase(iter);
+        // iter--;
+        continue;
+      }
+
+      sensor_model.data.emplace(correct_angle, distance);
+    }
+
+    RCLCPP_INFO_STREAM(get_logger(), "number of sensor model: " << sensor_model.data.size());
+
+    adaptResolution(sensor_model.max_range);
 
     // RCLCPP_INFO(get_logger(), "mcl update");
     mcl.update(motion_model, sensor_model, map);
@@ -239,7 +278,7 @@ private:
     const auto pos = Common::RealPos(mcl.pose.x, mcl.pose.y);
     const auto cos_ = mcl.pose.angle.cos(), sin_ = mcl.pose.angle.sin();
     const auto hit_prob = 1.0 - mcl_config.rand_prob / sensor_model.max_range;
-    for (const auto &s : sensor_model.data)
+    for (const auto &s : sensor_data)
     {
       auto data = Common::RealPos(s);
       auto point = pos + Common::RealPos(data.first * cos_ - data.second * sin_, data.first * sin_ + data.second * cos_);
@@ -249,14 +288,14 @@ private:
       likelihood4 += log(v);
     }
     RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-1(*=):\t" << likelihood2);
-    RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-2(+=):\t" << likelihood3 << ",\t" << likelihood3 / sensor_model.data.size());
+    RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-2(+=):\t" << likelihood3 << ",\t" << likelihood3 / sensor_data.size());
     RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-3(+=log):\t" << likelihood4 << ",\t" << exp(likelihood4));
 
     // 2D LiDARデータへ変換し、360度分の最短距離で尤度計算をする
     double sensor_likelihood = 0;
     int number_of_correct = 0;
     std::map<Utility::Angle, std::pair<Common::RealPos, double>> laser_data;
-    for (const auto &s : sensor_model.data)
+    for (const auto &s : sensor_data)
     {
       auto data = Common::RealPos(s);
       auto angle = Utility::Angle::FromRadian(std::atan2(data.y(), data.x()));
@@ -337,7 +376,7 @@ private:
         // likelihood2,
         // likelihood3 / sensor_model.data.size(),
         // likelihood3,
-        likelihood4 / sensor_model.data.size(),
+        likelihood4 / sensor_data.size(),
         likelihood4,
         sensor_likelihood,
         (double)number_of_correct,
@@ -349,7 +388,7 @@ private:
     pose_and_likelihoods_publisher_->publish(pose_and_likelihoods);
 
     draw_image();
-    draw_image_now_state(mcl.pose, sensor_model);
+    draw_image_now_state(mcl.pose, sensor_data);
   }
 
   void image_publisher()
@@ -489,7 +528,7 @@ private:
     }
   }
 
-  void draw_image_now_state(Pose &pose, Sensor::Model &sensor_model)
+  void draw_image_now_state(Pose &pose, pcl::PointCloud<pcl::PointXYZRGB> &sensor_data)
   {
     if (map.size() <= 0)
     {
@@ -499,7 +538,7 @@ private:
     auto pos = Common::RealPos(pose.x, pose.y);
     auto cos_ = pose.angle.cos(), sin_ = pose.angle.sin();
 #pragma omp parallel for
-    for (const auto &s : sensor_model.data)
+    for (const auto &s : sensor_data)
     {
       auto data = Common::RealPos(s);
       auto point = pos + Common::RealPos(data.x() * cos_ - data.y() * sin_, data.x() * sin_ + data.y() * cos_);

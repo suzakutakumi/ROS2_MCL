@@ -79,25 +79,53 @@ double MCL2D::LikelihoodFieldModelOnce(const Grid::Pos &point, const double &max
     return hit_prob * exp(-distance * distance / (2 * variance * variance)) + rand_prob / max_range;
 }
 
+double MCL2D::distance_duration(const Grid::Pos &pos, const Utility::Angle &angle, const Grid::Map &map, double sensor_distance, const double &max_sensor_distance)
+{
+    auto map_itr = map.find(pos);
+    double x = 0;
+    double y = 0;
+
+    while ((map_itr == map.end() or map_itr->second.distance() > 0) and x * x + y * y < max_sensor_distance * max_sensor_distance)
+    {
+        x += angle.cos();
+        y += angle.sin();
+        auto p = pos + Grid::Pos(x, y);
+        map_itr = map.find(p);
+    }
+    auto dis = std::min(std::sqrt(x * x + y * y), max_sensor_distance);
+    return sensor_distance - dis;
+}
+
 double MCL2D::calculate_weight(const Particle &particle, const Sensor::Model &sensor_data, const Grid::Map &map)
 {
     // パーティクルごとに各点群のマッチングをする
-    double weight = 0;
+    double weight = 1e-10;
     double weight_log = 0;
     const auto pos = Common::RealPos(particle.x, particle.y);
-    const auto cos_ = particle.angle.cos(), sin_ = particle.angle.sin();
+    const auto integer_pos = Grid::Pos(pos);
 
-#pragma omp parallel for reduction(+ : weight, weight_log)
-    for (const auto &s : sensor_data.data)
+    for (double degree_ = 0; degree_ < 360.0; degree_ += sensor_data.increment_angle)
     {
-        auto data = Common::RealPos(s);
-        auto point = pos + Common::RealPos(data.x() * cos_ - data.y() * sin_, data.x() * sin_ + data.y() * cos_);
-        auto p = LikelihoodFieldModelOnce(Grid::Pos(point), sensor_data.max_range, map);
-        weight += p * p * p;
-        weight_log += log(p);
-    }
+        auto angle = Utility::Angle::FromDegree(degree_);
+        auto iter = sensor_data.data.find(angle);
+        double current_dis;
+        if (iter == sensor_data.data.end())
+        {
+            continue;
+            current_dis = sensor_data.max_range;
+        }
+        else
+        {
+            current_dis = iter->second;
+        }
 
-    weight_total += exp(weight_log / sensor_data.data.size());
+        angle += particle.angle;
+        auto dis = distance_duration(integer_pos, angle, map, current_dis, sensor_data.max_range);
+
+        auto v = config.hit_prob * exp(-dis * dis / (2 * config.variance * config.variance)) + config.rand_prob / sensor_data.max_range;
+        weight += v * v * v;
+        weight_log += log(v);
+    }
 
     return particle.weight * weight;
 }

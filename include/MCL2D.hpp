@@ -45,6 +45,7 @@ public:
 
     double LikelihoodFieldModelOnce(const Grid::Pos &point, const double &max_range, const Grid::Map &map);
     double LikelihoodFieldModelOnce(const Grid::Pos &point, const double &max_range, const Grid::Map &map, const double &map_max_distance, const double &variance, const double &hit_prob, const double &rand_prob);
+    double distance_duration(const Grid::Pos &pos, const Utility::Angle &angle, const Grid::Map &map, double sensor_distance, const double &max_sensor_distance);
 
 private:
     double weight_total = 0;
