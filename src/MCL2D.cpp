@@ -125,6 +125,55 @@ void MCL2D::resampling(const Grid::Map &map)
     std::vector<Particle> new_particles;
     new_particles.clear();
 
+    // std::cout << weight_total << "," << weight_total / config.particle_num << std::endl;
+    // if (weight_total / config.particle_num < 0.25)
+    // {
+    //     for (auto &p : particles)
+    //     {
+    //         p.x += Utility::Random::NormalDistribution(0, 2/0.2);
+    //         p.y += Utility::Random::NormalDistribution(0, 2/0.2);
+    //         p.angle += Utility::Angle::FromRadian(Utility::Random::NormalDistribution(0, M_PI/8));
+    //     }
+
+    //     // for (int i = 0; i < config.particle_num; i++)
+    //     // {
+    //     //     if (Utility::Random::Real(0.0, 1.0) < config.resmapling_prob)
+    //     //     {
+    //     //         // random_sampliing
+    //     //         Particle p;
+    //     //         int x = Utility::Random::Integer(map.min_corner.x(), map.max_corner.x());
+    //     //         int y = Utility::Random::Integer(map.min_corner.y(), map.max_corner.y());
+
+    //     //         p.x = (double)x;
+    //     //         p.y = (double)y;
+    //     //         p.angle.set_degree(Utility::Random::Real(0, 359));
+    //     //         p.weight = 1.0 / config.particle_num;
+
+    //     //         new_particles.push_back(p);
+    //     //     }
+    //     //     else
+    //     //     {
+    //     //         double var = Utility::Random::Real(0.0, 1.0);
+    //     //         double sum = 0;
+    //     //         std::size_t index = 0;
+    //     //         for (std::size_t j = 0; j < particles.size(); j++)
+    //     //         {
+    //     //             sum += particles[j].weight;
+    //     //             if (var <= sum)
+    //     //             {
+    //     //                 index = j;
+    //     //                 break;
+    //     //             }
+    //     //         }
+    //     //         new_particles.push_back(particles[index]);
+    //     //     }
+    //     // }
+    //     // particles = std::move(new_particles);
+    //     weight_total = 0;
+    //     // return;
+    // }
+    // weight_total = 0;
+
     double ess = 0.0;
     for (auto &p : particles)
     {

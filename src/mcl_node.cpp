@@ -58,6 +58,7 @@ public:
     this->declare_parameter("error_ganma", 0.4);
     this->declare_parameter("error_vc", 0.05);
     this->declare_parameter("max_range", mcl_config.distance_map_max_value);
+    this->declare_parameter("show_image", true);
 
     resolution = get_parameter("map_resolution").as_double();
     ganma = get_parameter("error_ganma").as_double();
@@ -81,7 +82,7 @@ private:
   MCLConfig mcl_config;
   Grid::Map map;
   MCL2D mcl = MCL2D();
-  vector<vector<vector<int>>> map_;
+  vector<vector<vector<int>>> image;
 
   double resolution;
   double ganma;
@@ -193,7 +194,8 @@ private:
 
     mcl = MCL2D(map, mcl_config);
 
-    draw_image();
+    init_image();
+    draw_map();
   }
 
   void scanCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
@@ -233,7 +235,6 @@ private:
     auto likelihood1 = calc_error_ellipse(points, ganma, vc, resolution);
     RCLCPP_INFO_STREAM(get_logger(), "likelihood value1:\t" << likelihood1);
 
-    auto likelihood2 = 1.0;
     auto likelihood3 = 0.0;
     auto likelihood4 = 0.0;
     const auto pos = Common::RealPos(mcl.pose.x, mcl.pose.y);
@@ -244,88 +245,35 @@ private:
       auto data = Common::RealPos(s);
       auto point = pos + Common::RealPos(data.first * cos_ - data.second * sin_, data.first * sin_ + data.second * cos_);
       auto v = mcl.LikelihoodFieldModelOnce(Grid::Pos(point), sensor_model.max_range, map, mcl_config.distance_map_max_value, mcl_config.variance, hit_prob, mcl_config.rand_prob);
-      likelihood2 *= v;
       likelihood3 += v;
       likelihood4 += log(v);
     }
-    RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-1(*=):\t" << likelihood2);
     RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-2(+=):\t" << likelihood3 << ",\t" << likelihood3 / sensor_model.data.size());
     RCLCPP_INFO_STREAM(get_logger(), "likelihood value2-3(+=log):\t" << likelihood4 << ",\t" << exp(likelihood4));
 
     // 2D LiDARデータへ変換し、360度分の最短距離で尤度計算をする
-    double sensor_likelihood = 0;
-    int number_of_correct = 0;
-    std::map<Utility::Angle, std::pair<Common::RealPos, double>> laser_data;
-    for (const auto &s : sensor_model.data)
-    {
-      auto data = Common::RealPos(s);
-      auto angle = Utility::Angle::FromRadian(std::atan2(data.y(), data.x()));
-      auto distance = sqrt(data.x() * data.x() + data.y() * data.y());
-
-      auto iter = laser_data.find(angle);
-      if (iter != laser_data.end() and iter->second.second < distance)
-      {
-        continue;
-      }
-
-      laser_data.emplace(angle, std::make_pair(data, distance));
-    }
-
+    double number_of_correct = 0;
     const double increment_unit = 1.0;
-    double min_distance;
-    bool check_exist_laser = false;
-    Common::RealPos min_data;
-
     {
-      auto iter = laser_data.rbegin();
-      while (iter != laser_data.rend() and iter->first > Utility::Angle::FromDegree(360.0 - increment_unit / 2.0))
-      {
-        if (not check_exist_laser or iter->second.second < min_distance)
-        {
-          min_data = iter->second.first;
-          min_distance = iter->second.second;
-          check_exist_laser = true;
-        }
-        iter++;
-      }
-    }
+      std::map<Utility::Angle, double> laser_data;
 
-    auto laser_iter = laser_data.begin();
-    for (double angle = 0.0; angle < 360.0; angle += increment_unit)
-    {
-      while (laser_iter != laser_data.end() and laser_iter->first < Utility::Angle::FromDegree(angle + increment_unit / 2.0))
+      for (const auto &s : sensor_model.data)
       {
-        if (laser_iter->first < Utility::Angle::FromDegree(angle - increment_unit / 2.0))
+        auto data = Common::RealPos(s);
+        auto angle = Utility::Angle::FromRadian(std::atan2(data.y(), data.x()));
+        auto distance = std::sqrt(data.x() * data.x() + data.y() * data.y());
+
+        auto correction_angle = Utility::Angle::FromDegree(((int)(angle.get_degree() / increment_unit) % (int)(360 / increment_unit)) * increment_unit);
+
+        auto check = laser_data.find(correction_angle);
+        if (check != laser_data.end() and check->second < distance)
         {
-          laser_iter++;
           continue;
         }
 
-        if (not check_exist_laser or laser_iter->second.second < min_distance)
-        {
-          min_data = laser_iter->second.first;
-          min_distance = laser_iter->second.second;
-          check_exist_laser = true;
-        }
-        laser_iter++;
+        laser_data.emplace(correction_angle, distance);
       }
-
-      double v;
-      if (check_exist_laser)
-      {
-        auto point = pos + Common::RealPos(min_data.x() * cos_ - min_data.y() * sin_, min_data.x() * sin_ + min_data.y() * cos_);
-        v = mcl.LikelihoodFieldModelOnce(Grid::Pos(point), sensor_model.max_range, map, mcl_config.distance_map_max_value, mcl_config.variance, hit_prob, mcl_config.rand_prob);
-        number_of_correct++;
-      }
-      else
-      {
-        v = 0.2;
-      }
-      sensor_likelihood += log(v);
-
-      min_data = Common::RealPos{};
-      min_distance = __DBL_MAX__;
-      check_exist_laser = false;
+      number_of_correct = laser_data.size();
     }
 
     std_msgs::msg::Float64MultiArray pose_and_likelihoods;
@@ -339,7 +287,7 @@ private:
         // likelihood3,
         likelihood4 / sensor_model.data.size(),
         likelihood4,
-        sensor_likelihood,
+        0.0,
         (double)number_of_correct,
         (double)number_of_correct / (360 / increment_unit),
     };
@@ -348,38 +296,52 @@ private:
 
     pose_and_likelihoods_publisher_->publish(pose_and_likelihoods);
 
-    draw_image();
-    draw_image_now_state(mcl.pose, sensor_model);
+    if (get_parameter("show_image").as_bool())
+    {
+      init_image();
+      draw_map();
+
+      // auto pose = Pose{};
+      // pose.x = 0.0;
+      // pose.y = 1.0;
+      // pose.angle = Utility::Angle::FromDegree(90);
+      // adaptResolution(pose.x);
+      // adaptResolution(pose.y);
+      // mcl.pose = pose;
+
+      draw_mcl_content();
+      draw_sensor_with_pose(mcl.pose, sensor_model);
+    }
   }
 
   void image_publisher()
   {
-    if (map_.size() <= 0)
+    if (not get_parameter("show_image").as_bool() or image.size() <= 0)
     {
       return;
     }
     RCLCPP_INFO(get_logger(), "publish image");
 
-    sensor_msgs::msg::Image image;
-    image.height = map_.size();
-    image.width = map_[0].size();
-    image.encoding = "rgb8";
-    image.step = image.width * 3;
+    sensor_msgs::msg::Image image_msg;
+    image_msg.height = image.size();
+    image_msg.width = image[0].size();
+    image_msg.encoding = "rgb8";
+    image_msg.step = image_msg.width * 3;
 
-    for (auto itr = map_.rbegin(); itr != map_.rend(); ++itr)
+    for (auto itr = image.begin(); itr != image.end(); ++itr)
     {
       for (auto v : *itr)
       {
-        image.data.push_back(v[0]);
-        image.data.push_back(v[1]);
-        image.data.push_back(v[2]);
+        image_msg.data.push_back(v[0]);
+        image_msg.data.push_back(v[1]);
+        image_msg.data.push_back(v[2]);
       }
     }
 
-    publisher_->publish(image);
+    publisher_->publish(image_msg);
   }
 
-  void draw_image()
+  void init_image()
   {
     if (map.size() <= 0)
     {
@@ -394,7 +356,7 @@ private:
     int height = (max_range - min_range).y() + 1;
 
     // 地図初期化
-    map_ = vector<vector<vector<int>>>(height);
+    image = vector<vector<vector<int>>>(height);
     for (int i = 0; i < height; i++)
     {
       vector<vector<int>> blank_row(width);
@@ -403,18 +365,79 @@ private:
         blank_row[j] = vector<int>{0, 0, 0};
       }
 
-      map_[i] = blank_row;
+      image[i] = blank_row;
     }
+  }
+
+  void draw_map()
+  {
+    if (map.size() <= 0)
+    {
+      return;
+    }
+
+    // 最初値・最大値の取得
+    auto &min_range = map.min_corner;
+    auto &max_range = map.max_corner;
+
+    int width = (max_range - min_range).x() + 1;
+    int height = (max_range - min_range).y() + 1;
+
     // 障害物の状態を表示
     for (auto &grid : map)
     {
       if (grid.second.prob() > 0.4)
       {
         auto pos = grid.first - min_range;
-        map_[pos.y()][pos.x()] =
+        auto y = pos.y(), x = pos.x();
+        if (0 > y or y >= height or 0 > x or x >= width)
+          continue;
+        image[y][x] =
             vector<int>(3, (int)(255 * grid.second.prob()));
       }
     }
+
+    // // ゼロ位置を表示
+    // for (int i = -1; i <= 1; i++)
+    // {
+    //   for (int j = -1; j <= 1; j++)
+    //   {
+    //     auto y = -min_range.y() + i, x = -min_range.x() + j;
+    //     if (0 > y or y >= height or 0 > x or x >= width)
+    //       continue;
+    //     image[y][x][0] = 0;
+    //     image[y][x][1] = 0;
+    //     image[y][x][2] = 255;
+    //   }
+    // }
+    // // 向きも表示
+    // {
+    //   for (int i = 0; i < 10; i++)
+    //   {
+    //     auto x = (int)(-min_range.x() + i);
+    //     auto y = (int)(-min_range.y());
+    //     if (0 > y or y >= height or 0 > x or x >= width)
+    //       continue;
+    //     image[y][x][0] = 0;
+    //     image[y][x][1] = 0;
+    //     image[y][x][2] = 255;
+    //   }
+    // }
+  }
+
+  void draw_mcl_content()
+  {
+    if (map.size() <= 0)
+    {
+      return;
+    }
+
+    // 最初値・最大値の取得
+    auto &min_range = map.min_corner;
+    auto &max_range = map.max_corner;
+
+    int width = (max_range - min_range).x() + 1;
+    int height = (max_range - min_range).y() + 1;
 
     // パーティクルの表示
     auto max_weight = std::max_element(mcl.current_particles.begin(), mcl.current_particles.end(), [](const auto &a, const auto &b)
@@ -426,36 +449,9 @@ private:
       if (0 > y or y >= height or 0 > x or x >= width)
         continue;
       auto color = (int)(200 - p.weight * 200 / max_weight->weight);
-      map_[y][x][0] = 255;
-      map_[y][x][1] = color;
-      map_[y][x][2] = color;
-    }
-
-    // 中央を表示
-    for (int i = -1; i <= 1; i++)
-    {
-      for (int j = -1; j <= 1; j++)
-      {
-        auto y = -min_range.y() + i, x = -min_range.x() + j;
-        if (0 > y or y >= height or 0 > x or x >= width)
-          continue;
-        map_[y][x][0] = 0;
-        map_[y][x][1] = 0;
-        map_[y][x][2] = 255;
-      }
-    }
-    // 向きも表示
-    {
-      for (int i = 0; i < 10; i++)
-      {
-        auto x = (int)(-min_range.x() + i);
-        auto y = (int)(-min_range.y());
-        if (0 > y or y >= height or 0 > x or x >= width)
-          continue;
-        map_[y][x][0] = 0;
-        map_[y][x][1] = 0;
-        map_[y][x][2] = 255;
-      }
+      image[y][x][0] = 255;
+      image[y][x][1] = color;
+      image[y][x][2] = color;
     }
 
     // 予測自己位置を表示
@@ -467,9 +463,9 @@ private:
         if (0 > y or y >= height or 0 > x or x >= width)
           continue;
 
-        map_[y][x][0] = 0;
-        map_[y][x][1] = 255;
-        map_[y][x][2] = 0;
+        image[y][x][0] = 0;
+        image[y][x][1] = 255;
+        image[y][x][2] = 0;
       }
     }
     // 向きも表示
@@ -482,14 +478,14 @@ private:
         if (0 > y or y >= height or 0 > x or x >= width)
           continue;
 
-        map_[y][x][0] = 0;
-        map_[y][x][1] = 255;
-        map_[y][x][2] = 0;
+        image[y][x][0] = 0;
+        image[y][x][1] = 255;
+        image[y][x][2] = 0;
       }
     }
   }
 
-  void draw_image_now_state(Pose &pose, Sensor::Model &sensor_model)
+  void draw_sensor_with_pose(Pose &pose, Sensor::Model &sensor_model)
   {
     if (map.size() <= 0)
     {
@@ -512,11 +508,12 @@ private:
       if (0 > y or y >= height or 0 > x or x >= width)
         continue;
 
-      map_[y][x][0] = 0;
-      // map_[y][x][1] = 255;
-      map_[y][x][2] = 255;
+      image[y][x][0] = 0;
+      // image[y][x][1] = 255;
+      image[y][x][2] = 255;
     }
   }
+
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription1_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription2_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
